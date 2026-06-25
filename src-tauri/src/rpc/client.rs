@@ -74,12 +74,32 @@ impl PiRpcClient {
 
         eprintln!("[PiGUI] Spawning pi with args: {:?}", args);
 
-        // Hide console window on Windows
+        // Windows-specific: hide console window and prefer pi.exe over shell wrappers
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW: don't create a console for this process
+            // CREATE_NEW_PROCESS_GROUP: create a new process group so child processes
+            // (like node.exe spawned by .cmd) don't attach to our console
             const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+            let flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
+
+            // Prefer a real pi.exe over .cmd/.ps1 wrapper to avoid console flash
+            if let Some(exe_path) = find_pi_exe() {
+                eprintln!("[PiGUI] Prefer real executable: {}", exe_path);
+                cmd = Command::new(&exe_path);
+                // Re-apply args after switching command
+                let mut new_args = vec!["--mode", "rpc", "--no-session"];
+                if let Some(m) = model {
+                    eprintln!("[PiGUI] Setting model: {}", m);
+                    new_args.push("--model");
+                    new_args.push(m);
+                }
+                args = new_args;
+            }
+
+            cmd.creation_flags(flags);
         }
 
         let mut child = cmd
@@ -283,6 +303,36 @@ pub fn find_pi() -> Option<String> {
         let path = std::path::Path::new(loc);
         if path.exists() {
             return Some(loc.to_string());
+        }
+    }
+
+    None
+}
+
+/// Find a real pi executable (not a wrapper script) to avoid console window issues.
+#[cfg(target_os = "windows")]
+fn find_pi_exe() -> Option<String> {
+    // Look for pi.exe specifically in PATH and known locations
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let candidate = dir.join("pi.exe");
+            if candidate.exists() {
+                return Some(candidate.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    // Check common locations
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
+    let candidates = [
+        format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\bin\pi.exe", home),
+        format!(r"{}\.nvm\current\bin\pi.exe", home),
+        r"C:\Program Files\nodejs\pi.exe".to_string(),
+    ];
+
+    for c in &candidates {
+        if std::path::Path::new(c).exists() {
+            return Some(c.clone());
         }
     }
 

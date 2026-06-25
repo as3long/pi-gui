@@ -1059,15 +1059,14 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_result", async (_event: any, ctx: ExtensionContext) => {
     const leaf = ctx.sessionManager.getLeafEntry();
     if (leaf) {
-      // Store current entry ID
       const id = leaf.id;
-      if (id) {
-        // Create a git stash checkpoint
-        const { stdout } = await pi.exec("git", ["stash", "create"]);
-        const ref = stdout.trim();
-        if (ref) {
-          checkpoints.set(id, ref);
-        }
+      if (id && !checkpoints.has(id)) {
+        // Defer checkpoint creation to not slow down tool execution
+        setTimeout(async () => {
+          const { stdout } = await pi.exec("git", ["stash", "create"], { timeout: 15_000 });
+          const ref = stdout.trim();
+          if (ref) checkpoints.set(id, ref);
+        }, 0);
       }
     }
   });
@@ -1088,20 +1087,25 @@ export default function (pi: ExtensionAPI) {
     }
   });
 
-  // ── Status bar ──
+  // ── Status bar (non-blocking: defer to avoid startup delay) ──
 
   pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
-    if (!(await isGitRepo(pi))) return;
-    const branch = await getCurrentBranch(pi);
-    const dirty = await hasUncommittedChanges(pi);
-    const icon = dirty ? "⚠️" : "✅";
-    ctx.ui.setStatus("git", `${icon} ${branch}`);
+    // Defer git info load — don't block pi startup
+    setTimeout(async () => {
+      if (!(await isGitRepo(pi))) return;
+      const branch = await getCurrentBranch(pi);
+      const dirty = await hasUncommittedChanges(pi);
+      const icon = dirty ? "⚠️" : "✅";
+      ctx.ui.setStatus("git", `${icon} ${branch}`);
+    }, 0);
   });
 
-  // Notify on session start
+  // Notify on session start (deferred)
   pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
-    if (!(await isGitRepo(pi))) return;
-    const branch = await getCurrentBranch(pi);
-    ctx.ui.notify(`🐙 Git ready — on branch \`${branch}\``, "info");
+    setTimeout(async () => {
+      if (!(await isGitRepo(pi))) return;
+      const branch = await getCurrentBranch(pi);
+      ctx.ui.notify(`🐙 Git ready — on branch \`${branch}\``, "info");
+    }, 0);
   });
 }

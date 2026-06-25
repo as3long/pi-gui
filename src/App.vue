@@ -113,22 +113,17 @@ onMounted(async () => {
       console.log('[PiGUI] Pi process started successfully')
     }
     
-    // Get initial state
-    await piGetState()
+    // Fire-and-forget: state, stats, and directory in parallel (don't block UI)
+    Promise.all([
+      piGetState().catch(e => console.warn('[PiGUI] get-state failed:', e)),
+      piGetSessionStats().catch(e => console.warn('[PiGUI] session-stats failed:', e)),
+      loadDirectory(cwd).catch(e => console.warn('[PiGUI] load-directory failed:', e)),
+    ])
     
-    // Get session stats
-    await piGetSessionStats()
-    
-    // Get available models
-    try {
-      const models = await piGetAvailableModels()
-      settingsStore.setAvailableModels(models)
-    } catch (e) {
-      console.error('[PiGUI] Failed to load available models:', e)
-    }
-    
-    // Load initial directory
-    await loadDirectory(cwd)
+    // Lazy-load models in background (slow network call, don't block startup)
+    piGetAvailableModels()
+      .then(models => settingsStore.setAvailableModels(models))
+      .catch(e => console.warn('[PiGUI] load models failed (will retry on /model):', e))
   } catch (e) {
     console.error('[PiGUI] Failed to auto-start pi:', e)
     // Don't show error to user, they can start manually
