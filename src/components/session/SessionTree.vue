@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
-import { piNewSession, piSwitchSession, piFork, piReadSession, piReadDirectory, piGetHomeDir } from '../../ipc/bridge'
+import { piNewSession, piSwitchSession, piFork, piReadSession, piReadDirectory, piGetHomeDir, piDeleteFile, piGetSessionStats } from '../../ipc/bridge'
 
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
@@ -47,97 +47,6 @@ const sessionTags = ref<Record<string, { name: string; color: string }>>({})
 
 function getSessionTag(sessionId: string) {
   return sessionTags.value[sessionId] || null
-}
-
-
-
-// Export sessions
-function exportSessions() {
-  const data = {
-    sessions: sessionStore.sessions,
-    tags: sessionTags.value,
-    exportedAt: new Date().toISOString()
-  }
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `pi-sessions-${Date.now()}.json`
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-// Import sessions
-const fileInput = ref<HTMLInputElement | null>(null)
-const jsonlFileInput = ref<HTMLInputElement | null>(null)
-
-function importSessions() {
-  fileInput.value?.click()
-}
-
-function importJsonlSession() {
-  jsonlFileInput.value?.click()
-}
-
-async function handleJsonlImport(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-
-  try {
-    const content = await file.text()
-    const lines = content.split('\n').filter(l => l.trim())
-    
-    // Parse JSONL and extract messages
-    const messages: any[] = []
-    
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line)
-        if (entry.type === 'message') {
-          messages.push(entry.message)
-        }
-      } catch {}
-    }
-    
-    if (messages.length > 0) {
-      // Load messages into chat store
-      chatStore.clearMessages()
-      for (const msg of messages) {
-        chatStore.addMessage(msg)
-      }
-      alert(`Loaded ${messages.length} messages from ${file.name}`)
-    } else {
-      alert('No messages found in file')
-    }
-  } catch (err) {
-    alert('Failed to parse JSONL file: ' + err)
-  }
-  
-  input.value = ''
-}
-
-function handleFileImport(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (!file) return
-
-  const reader = new FileReader()
-  reader.onload = (e) => {
-    try {
-      const data = JSON.parse(e.target?.result as string)
-      if (data.tags) {
-        sessionTags.value = { ...sessionTags.value, ...data.tags }
-        localStorage.setItem('sessionTags', JSON.stringify(sessionTags.value))
-      }
-      // Note: sessions would need backend support for actual import
-      alert('Tags imported successfully!')
-    } catch (err) {
-      alert('Failed to import: Invalid JSON')
-    }
-  }
-  reader.readAsText(file)
-  input.value = ''
 }
 
 // Drag and drop handlers
@@ -296,6 +205,7 @@ async function createNewSession() {
 async function switchToSession(path: string) {
   await piSwitchSession(path)
   chatStore.clearMessages()
+  piGetSessionStats()
 }
 
 async function openSession(session: any) {
@@ -311,6 +221,8 @@ async function openSession(session: any) {
     sessionStore.currentSessionId = session.id
     sessionStore.currentSessionFile = session.path
     sessionStore.sessionName = session.name || null
+    await piGetSessionStats()
+    setTimeout(() => piGetSessionStats(), 500)
   } catch (e) {
     console.warn('[SessionTree] Failed to open session:', e)
   }
@@ -319,6 +231,22 @@ async function openSession(session: any) {
 async function forkSession(entryId: string) {
   await piFork(entryId)
   chatStore.clearMessages()
+}
+
+async function deleteSession(session: any) {
+  const confirmed = window.confirm(`Delete session "${session.name || session.id}"?`)
+  if (!confirmed) return
+  try {
+    await piDeleteFile(session.path)
+    // Remove from local list
+    const idx = sessionStore.sessions.findIndex(s => s.id === session.id)
+    if (idx !== -1) {
+      sessionStore.sessions.splice(idx, 1)
+    }
+  } catch (e) {
+    console.error('[SessionTree] Failed to delete session:', e)
+    alert(`Failed to delete session: ${e}`)
+  }
 }
 
 onMounted(() => {
@@ -347,31 +275,6 @@ onMounted(() => {
         class="search-input"
         placeholder="Search sessions..."
       />
-      <div class="search-actions">
-        <button class="btn-action" @click="exportSessions" title="Export">
-          📤
-        </button>
-        <button class="btn-action" @click="importSessions" title="Import Tags">
-          📥
-        </button>
-        <button class="btn-action" @click="importJsonlSession" title="Import JSONL Session">
-          📄
-        </button>
-        <input
-          ref="fileInput"
-          type="file"
-          accept=".json"
-          style="display: none"
-          @change="handleFileImport"
-        />
-        <input
-          ref="jsonlFileInput"
-          type="file"
-          accept=".jsonl"
-          style="display: none"
-          @change="handleJsonlImport"
-        />
-      </div>
     </div>
 
     <div v-if="isLoading" class="session-tree-loading">
@@ -422,6 +325,13 @@ onMounted(() => {
         </div>
         <!-- Actions -->
         <div class="session-actions">
+          <button
+            class="btn-session-action delete"
+            title="Delete Session"
+            @click.stop="deleteSession(session)"
+          >
+            🗑️
+          </button>
           <button
             class="btn-session-action"
             title="Fork Session"

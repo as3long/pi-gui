@@ -6,10 +6,17 @@ const props = defineProps<{
   text: string
 }>()
 
+// Strip ANSI escape codes
+function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+}
+
 const md = new MarkdownIt({
   html: false,
   linkify: true,
   typographer: true,
+  breaks: true,
   highlight: (str: string, lang: string) => {
     try {
       // Basic escape
@@ -28,7 +35,7 @@ const md = new MarkdownIt({
   },
 })
 
-const html = computed(() => md.render(props.text))
+const html = computed(() => md.render(stripAnsi(props.text)))
 </script>
 
 <template>

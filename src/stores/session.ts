@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { useSettingsStore } from './settings'
 import type {
   SessionInfo,
   SessionStats,
@@ -83,9 +84,9 @@ export const useSessionStore = defineStore('session', () => {
     if (event.type === 'response') {
       // Support both camelCase and snake_case field names
       const data = (event as any).data as any
+      const cmd = (event as any).command
       
       // Check if this is a stats response
-      const cmd = (event as any).command
       if (cmd === 'get_session_stats' && data) {
         stats.value = data as SessionStats
         console.log('[SessionStore] Updated stats:', stats.value)
@@ -93,7 +94,43 @@ export const useSessionStore = defineStore('session', () => {
         stats.value = data as SessionStats
         console.log('[SessionStore] Updated stats (shape match):', stats.value)
       }
+
+      // Handle available models response
+      if (cmd === 'get_available_models' && Array.isArray(data)) {
+        // Note: This is handled via direct invoke now, not via RPC response
+        // Keep this for backward compatibility
+        const settingsStore = useSettingsStore()
+        const models = data.map((m: any) => ({
+          id: m.id || m.modelId || m.model_id || '',
+          name: m.name || m.id || m.modelId || m.model_id || '',
+          provider: m.provider || '',
+          reasoning: m.reasoning || false,
+        }))
+        settingsStore.setAvailableModels(models)
+        console.log('[SessionStore] Updated available models from event:', models.length)
+      }
       
+      // Handle set_model response - update current model
+      if (cmd === 'set_model' && data) {
+        if (data.model) {
+          currentModel.value = data.model
+          console.log('[SessionStore] Updated model from set_model response:', data.model)
+        } else if (data.provider && data.modelId) {
+          // Construct model info from provider and modelId
+          currentModel.value = {
+            id: data.modelId,
+            name: data.modelId,
+            provider: data.provider,
+            api: '',
+            baseUrl: '',
+            reasoning: false,
+            contextWindow: 0,
+            maxTokens: 0,
+          }
+          console.log('[SessionStore] Constructed model from set_model response:', data.provider, data.modelId)
+        }
+      }
+
       // Handle UI state response
       if (data && 'sessionId' in data) {
         currentSessionId.value = data.sessionId

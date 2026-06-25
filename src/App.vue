@@ -4,10 +4,11 @@ import { useSettingsStore } from './stores/settings'
 import { useSessionStore } from './stores/session'
 import ChatView from './components/chat/ChatView.vue'
 import SettingsPanel from './components/settings/SettingsPanel.vue'
+import LoginDialog from './components/settings/LoginDialog.vue'
 import ExtensionDialog from './components/extension/ExtensionDialog.vue'
 import SessionTree from './components/session/SessionTree.vue'
 import { FileTree } from './components/files'
-import { startEventListeners, clearEventHandlers, onPiEvent, piNewSession, piCycleModel, piStart, piGetState, piReadDirectory, piIsRunning, piDeleteFile } from './ipc/bridge'
+import { startEventListeners, clearEventHandlers, onPiEvent, piNewSession, piCycleModel, piStart, piGetState, piReadDirectory, piIsRunning, piDeleteFile, piGetAvailableModels, piGetSessionStats } from './ipc/bridge'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { useChatStore } from './stores/chat'
 import CodeEditor from './components/editor/CodeEditor.vue'
@@ -17,6 +18,7 @@ const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 
 const showSettings = ref(false)
+const showLogin = ref(false)
 const showSessions = ref(false)
 const showFiles = ref(false)
 // File tree state
@@ -113,6 +115,17 @@ onMounted(async () => {
     
     // Get initial state
     await piGetState()
+    
+    // Get session stats
+    await piGetSessionStats()
+    
+    // Get available models
+    try {
+      const models = await piGetAvailableModels()
+      settingsStore.setAvailableModels(models)
+    } catch (e) {
+      console.error('[PiGUI] Failed to load available models:', e)
+    }
     
     // Load initial directory
     await loadDirectory(cwd)
@@ -282,7 +295,7 @@ async function handleReconnect() {
       </div>
 
       <nav class="sidebar-nav">
-        <button class="nav-btn" :class="{ active: !showSettings && !showSessions && !showFiles }" @click="showSettings = false; showSessions = false; showFiles = false">
+        <button class="nav-btn" :class="{ active: !showSettings && !showLogin && !showSessions && !showFiles }" @click="showSettings = false; showLogin = false; showSessions = false; showFiles = false">
           <span class="nav-icon">💬</span>
           <span class="nav-label">Chat</span>
         </button>
@@ -293,6 +306,10 @@ async function handleReconnect() {
         <button class="nav-btn" :class="{ active: showFiles }" @click="showFiles = !showFiles">
           <span class="nav-icon">📁</span>
           <span class="nav-label">Files</span>
+        </button>
+        <button class="nav-btn" :class="{ active: showLogin }" @click="showLogin = !showLogin">
+          <span class="nav-icon">🔑</span>
+          <span class="nav-label">Login</span>
         </button>
         <button class="nav-btn" :class="{ active: showSettings }" @click="showSettings = !showSettings">
           <span class="nav-icon">⚙️</span>
@@ -312,6 +329,7 @@ async function handleReconnect() {
     <aside v-if="showSessions" class="session-panel">
       <SessionTree @close="showSessions = false" />
     </aside>
+    <LoginDialog v-if="showLogin" @close="showLogin = false" />
 
     <!-- File Tree Panel -->
     <aside v-if="showFiles" class="file-panel">

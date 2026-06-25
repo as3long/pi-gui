@@ -1,6 +1,7 @@
 mod rpc;
 
 use rpc::client::PiRpcClient;
+use rpc::client::find_pi as find_pi_binary;
 use rpc::protocol::*;
 use std::sync::Mutex;
 use tauri::{AppHandle, State};
@@ -84,7 +85,22 @@ fn pi_get_messages(state: State<'_, AppState>) -> Result<(), String> {
 
 /// Switch to a specific model.
 #[tauri::command]
-fn pi_set_model(state: State<'_, AppState>, provider: String, model_id: String) -> Result<(), String> {
+fn pi_set_model(state: State<'_, AppState>, app: AppHandle, provider: String, model_id: String) -> Result<(), String> {
+    // For models with ':' (e.g. OpenRouter's qwen/qwen3-coder:free),
+    // pi's RPC parses ':' as thinking level. Restart with --model flag.
+    if model_id.contains(':') {
+        let full_model = format!("{}/{}", provider, model_id);
+        eprintln!("[PiGUI] Model with colon, restarting pi with --model: {}", full_model);
+        let cwd = std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let mut rpc = state.rpc.lock().map_err(|e| e.to_string())?;
+        rpc.kill();
+        rpc.spawn_with_model(&cwd, app, Some(&full_model))?;
+        return Ok(());
+    }
+    
+    // Normal RPC approach for standard models
     let mut rpc = state.rpc.lock().map_err(|e| e.to_string())?;
     let cmd = RpcCommand::SetModel(SetModelCommand::new("set-model", provider, model_id));
     rpc.send_command(&cmd)
@@ -98,12 +114,53 @@ fn pi_cycle_model(state: State<'_, AppState>) -> Result<(), String> {
     rpc.send_command(&cmd)
 }
 
-/// List all configured models.
+/// Get available models by running `pi --list-models`
 #[tauri::command]
-fn pi_get_available_models(state: State<'_, AppState>) -> Result<(), String> {
-    let mut rpc = state.rpc.lock().map_err(|e| e.to_string())?;
-    let cmd = RpcCommand::GetAvailableModels(GetAvailableModelsCommand::new("get-models"));
-    rpc.send_command(&cmd)
+fn pi_get_available_models() -> Result<serde_json::Value, String> {
+    // Find pi binary
+    let pi_path = find_pi_binary().ok_or("pi binary not found")?;
+    
+    eprintln!("[PiGUI] Running: {} --list-models", pi_path);
+    
+    let output = std::process::Command::new(&pi_path)
+        .arg("--list-models")
+        .output()
+        .map_err(|e| format!("Failed to run pi --list-models: {}", e))?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("pi --list-models failed: {}", stderr));
+    }
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut models = Vec::new();
+    
+    for line in stdout.lines() {
+        let line = line.trim();
+        // Skip header line and empty lines
+        if line.is_empty() || line.starts_with("provider") || line.starts_with("---") {
+            continue;
+        }
+        
+        // Parse line: provider  model  context  max-out  thinking  images
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let provider = parts[0].to_string();
+            let model_id = parts[1].to_string();
+            // thinking is column 4 (0-indexed: 3)
+            let reasoning = parts.get(3).map(|&s| s == "yes").unwrap_or(false);
+            
+            models.push(serde_json::json!({
+                "id": model_id,
+                "name": model_id,
+                "provider": provider,
+                "reasoning": reasoning,
+            }));
+        }
+    }
+    
+    eprintln!("[PiGUI] Found {} models", models.len());
+    Ok(serde_json::json!(models))
 }
 
 /// Set thinking level.
@@ -225,6 +282,25 @@ fn pi_get_agent_auth() -> Result<serde_json::Value, String> {
     
     serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse auth: {}", e))
+}
+
+/// Write pi agent auth to ~/.pi/agent/auth.json
+#[tauri::command]
+fn pi_set_agent_auth(auth: serde_json::Value) -> Result<(), String> {
+    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
+    let auth_path = home_dir.join(".pi/agent/auth.json");
+    
+    // Ensure parent directory exists
+    if let Some(parent) = auth_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
+    
+    let content = serde_json::to_string_pretty(&auth)
+        .map_err(|e| format!("Failed to serialize auth: {}", e))?;
+    
+    std::fs::write(&auth_path, content)
+        .map_err(|e| format!("Failed to write auth: {}", e))
 }
 
 /// Get home directory path
@@ -697,7 +773,8 @@ pub fn run() {
             pi_extension_ui_response,
             pi_get_agent_settings,
             pi_set_agent_settings,
-            pi_get_agent_auth,
+            pi_set_agent_auth,
+    pi_get_agent_auth,
             pi_get_home_dir,
             pi_delete_file,
             pi_read_directory,

@@ -135,7 +135,7 @@ onMounted(() => {
             </div>
             <div class="info-item">
               <span class="info-label">Thinking Level</span>
-              <span class="info-value">{{ agentSettings.defaultThinkingLevel || 'Not set' }}</span>
+              <span class="info-value">{{ settingsStore.thinkingLevel || 'Not set' }}</span>
             </div>
           </div>
         </div>

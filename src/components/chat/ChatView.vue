@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import MessageList from './MessageList.vue'
 import InputArea from '../input/InputArea.vue'
+import ModelPicker from '../settings/ModelPicker.vue'
+import StatusBar from './StatusBar.vue'
 import { useChatStore } from '../../stores/chat'
 import { useSessionStore } from '../../stores/session'
 import { useSettingsStore } from '../../stores/settings'
-import { piPrompt, piSteer, piAbort, piStart, piNewSession, piGetSessionStats } from '../../ipc/bridge'
+import { piPrompt, piSteer, piAbort, piStart, piNewSession, piGetSessionStats, piCompactSession } from '../../ipc/bridge'
+import { watch } from 'vue'
 
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
@@ -49,6 +52,8 @@ async function onSend(message: string) {
       await piPrompt(id, message)
     }
     console.log('[PiGUI] Message sent successfully')
+    // Refresh stats after sending
+    setTimeout(() => piGetSessionStats(), 500)
   } catch (e) {
     console.error('[PiGUI] Failed to send message:', e)
   }
@@ -66,6 +71,34 @@ async function onNewSession() {
 async function onRefreshStats() {
   await piGetSessionStats()
 }
+
+async function onCompact() {
+  const snapshot = sessionStore.currentSessionSnapshot
+  if (!snapshot) {
+    console.warn('[ChatView] No active session to compact')
+    return
+  }
+  try {
+    await piCompactSession(snapshot.ref)
+  } catch (e) {
+    console.error('[ChatView] Failed to compact session:', e)
+  }
+}
+
+// Periodically refresh stats while streaming
+let statsInterval: ReturnType<typeof setInterval> | null = null
+watch(() => chatStore.isStreaming, (streaming) => {
+  if (streaming) {
+    statsInterval = setInterval(() => piGetSessionStats(), 3000)
+  } else {
+    if (statsInterval) {
+      clearInterval(statsInterval)
+      statsInterval = null
+    }
+    // Final refresh when streaming ends
+    piGetSessionStats()
+  }
+})
 </script>
 
 <template>
@@ -73,15 +106,7 @@ async function onRefreshStats() {
     <!-- Header -->
     <div class="chat-header">
       <div class="model-info">
-        <span v-if="sessionStore.currentModel" class="model-badge">
-          {{ sessionStore.currentModel.provider }} / {{ sessionStore.currentModel.name }}
-        </span>
-        <span v-else-if="sessionStore.isRunning" class="model-badge waiting">
-          ⏳ Select Model
-        </span>
-        <span v-else class="model-badge offline">
-          ⚫ Offline
-        </span>
+        <ModelPicker />
         <span v-if="chatStore.isStreaming" class="status-badge streaming">Streaming…</span>
         <span v-if="chatStore.isCompacting" class="status-badge compacting">Compacting…</span>
         <span v-if="chatStore.isRetrying" class="status-badge retrying">Retrying…</span>
@@ -90,11 +115,11 @@ async function onRefreshStats() {
         <span v-if="sessionStore.sessionName" class="session-name">
           {{ sessionStore.sessionName }}
         </span>
-        <span v-if="sessionStore.stats" class="token-info">
-          {{ sessionStore.stats.tokens.total.toLocaleString() }} tokens
-        </span>
       </div>
     </div>
+
+    <!-- Status Bar (TUI style) -->
+    <StatusBar />
 
     <!-- Toolbar -->
     <div class="toolbar">
@@ -109,6 +134,10 @@ async function onRefreshStats() {
       <button class="toolbar-btn" @click="chatStore.clearMessages()" title="Clear Chat">
         <span class="toolbar-icon">🗑️</span>
         <span class="toolbar-label">Clear</span>
+      </button>
+      <button class="toolbar-btn" @click="onCompact" title="Compact Session" :disabled="chatStore.isCompacting">
+        <span class="toolbar-icon">📦</span>
+        <span class="toolbar-label">{{ chatStore.isCompacting ? 'Compacting…' : 'Compact' }}</span>
       </button>
     </div>
 
@@ -159,24 +188,6 @@ async function onRefreshStats() {
   gap: 8px;
 }
 
-.model-badge {
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: var(--badge-bg);
-  color: var(--accent-color);
-  font-weight: 500;
-}
-
-.model-badge.offline {
-  color: var(--muted-color);
-  background: var(--error-bg);
-}
-
-.model-badge.waiting {
-  color: var(--warning-color);
-  background: var(--warning-bg);
-}
-
 .status-badge {
   padding: 2px 8px;
   border-radius: 4px;
@@ -212,10 +223,6 @@ async function onRefreshStats() {
 
 .session-name {
   font-weight: 500;
-}
-
-.token-info {
-  font-family: 'SF Mono', monospace;
 }
 
 .error-banner {

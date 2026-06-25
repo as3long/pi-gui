@@ -16,7 +16,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const darkMode = ref(true)
 
   // Available models from pi
-  const availableModels = ref<Array<{ id: string; name: string; provider: string }>>([])
+  const availableModels = ref<Array<{ id: string; name: string; provider: string; reasoning?: boolean }>>([])
 
   // ── Actions ──
 
@@ -54,7 +54,7 @@ export const useSettingsStore = defineStore('settings', () => {
     localStorage.setItem('pi-gui:darkMode', String(darkMode.value))
   }
 
-  function setAvailableModels(models: Array<{ id: string; name: string; provider: string }>) {
+  function setAvailableModels(models: Array<{ id: string; name: string; provider: string; reasoning?: boolean }>) {
     availableModels.value = models
   }
 

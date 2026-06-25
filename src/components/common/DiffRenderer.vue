@@ -6,9 +6,17 @@ const props = defineProps<{
   text: string
 }>()
 
+// Strip ANSI escape codes
+function stripAnsi(str: string): string {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '')
+}
+
+const cleanText = computed(() => stripAnsi(props.text))
+
 // Detect if the content looks like a diff
 const isDiff = computed(() => {
-  const lines = props.text.split('\n')
+  const lines = cleanText.value.split('\n')
   let diffLines = 0
   for (const line of lines) {
     if (line.startsWith('diff --git') || line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('@@ ')) {
@@ -24,7 +32,7 @@ const isDiff = computed(() => {
 
 const diffLines = computed(() => {
   if (!isDiff.value) return []
-  return props.text.split('\n').map((line) => ({
+  return cleanText.value.split('\n').map((line) => ({
     text: line,
     type: getLineType(line),
   }))
@@ -68,7 +76,7 @@ function getLineType(line: string): LineType {
       </div>
     </div>
     <!-- Otherwise render as normal markdown -->
-    <MarkdownRenderer v-else :text="text" />
+    <MarkdownRenderer v-else :text="cleanText" />
   </div>
 </template>
 

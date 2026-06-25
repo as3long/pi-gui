@@ -69,8 +69,9 @@ export async function piCycleModel(): Promise<void> {
   await invoke('pi_cycle_model')
 }
 
-export async function piGetAvailableModels(): Promise<void> {
-  await invoke('pi_get_available_models')
+export async function piGetAvailableModels(): Promise<any[]> {
+  const result = await invoke<any>('pi_get_available_models')
+  return result
 }
 
 export async function piSetThinkingLevel(level: string): Promise<void> {
@@ -219,6 +220,9 @@ export async function piSetAgentSettings(settings: PiAgentSettings): Promise<voi
 
 export async function piGetAgentAuth(): Promise<PiAgentAuth> {
   return await invoke<PiAgentAuth>('pi_get_agent_auth')
+}
+export async function piSetAgentAuth(auth: Record<string, { type: string; key: string }>): Promise<void> {
+  await invoke('pi_set_agent_auth', { auth })
 }
 
 export async function piGetHomeDir(): Promise<string> {

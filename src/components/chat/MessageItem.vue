@@ -37,14 +37,132 @@ const thinkingContent = computed(() => {
   return assistantMsg.value.content.filter(c => c.type === 'thinking').map(c => (c as { thinking: string }).thinking).join('\n')
 })
 
+interface ToolCallInfo {
+  id: string
+  name: string
+  args: string
+  diff?: { oldText: string; newText: string; filePath?: string } | null
+}
+
 const toolCalls = computed(() => {
   if (!isAssistant.value) return []
-  return assistantMsg.value.content.filter(c => c.type === 'toolCall').map(c => ({
-    id: (c as { id: string }).id,
-    name: (c as { name: string }).name,
-    args: JSON.stringify((c as { arguments: Record<string, unknown> }).arguments, null, 2),
-  }))
+  return assistantMsg.value.content.filter(c => c.type === 'toolCall').map(c => {
+    const args = (c as { arguments: Record<string, unknown> }).arguments
+    const name = (c as { name: string }).name
+    const id = (c as { id: string }).id
+    
+    // Parse edit tool diff
+    let diff: ToolCallInfo['diff'] = null
+    if (name === 'edit' && args.oldText && args.newText) {
+      diff = {
+        oldText: String(args.oldText),
+        newText: String(args.newText),
+        filePath: args.path ? String(args.path) : undefined,
+      }
+    }
+    
+    return {
+      id,
+      name,
+      args: JSON.stringify(args, null, 2),
+      diff,
+    }
+  })
 })
+
+// Compute line-by-line diff for edit tool
+interface DiffLine {
+  type: 'add' | 'remove' | 'context'
+  oldLineNum?: number
+  newLineNum?: number
+  text: string
+}
+
+const editDiffLines = computed((): DiffLine[] => {
+  const tc = toolCalls.value.find(t => t.diff)
+  if (!tc?.diff) return []
+  
+  const oldLines = tc.diff.oldText.split('\n')
+  const newLines = tc.diff.newText.split('\n')
+  
+  // Simple LCS-based diff
+  const result: DiffLine[] = []
+  const lcs = computeLCS(oldLines, newLines)
+  
+  let oldIdx = 0
+  let newIdx = 0
+  let lcsIdx = 0
+  let oldLineNum = 1
+  let newLineNum = 1
+  
+  while (oldIdx < oldLines.length || newIdx < newLines.length) {
+    if (lcsIdx < lcs.length && oldIdx < oldLines.length && newIdx < newLines.length &&
+        oldLines[oldIdx] === lcs[lcsIdx] && newLines[newIdx] === lcs[lcsIdx]) {
+      result.push({ type: 'context', oldLineNum: oldLineNum++, newLineNum: newLineNum++, text: oldLines[oldIdx] })
+      oldIdx++
+      newIdx++
+      lcsIdx++
+    } else if (lcsIdx < lcs.length && oldIdx < oldLines.length && oldLines[oldIdx] === lcs[lcsIdx]) {
+      // New lines added
+      while (newIdx < newLines.length && newLines[newIdx] !== lcs[lcsIdx]) {
+        result.push({ type: 'add', newLineNum: newLineNum++, text: newLines[newIdx] })
+        newIdx++
+      }
+    } else if (lcsIdx < lcs.length && newIdx < newLines.length && newLines[newIdx] === lcs[lcsIdx]) {
+      // Old lines removed
+      while (oldIdx < oldLines.length && oldLines[oldIdx] !== lcs[lcsIdx]) {
+        result.push({ type: 'remove', oldLineNum: oldLineNum++, text: oldLines[oldIdx] })
+        oldIdx++
+      }
+    } else {
+      // Remaining lines at end
+      while (oldIdx < oldLines.length) {
+        result.push({ type: 'remove', oldLineNum: oldLineNum++, text: oldLines[oldIdx] })
+        oldIdx++
+      }
+      while (newIdx < newLines.length) {
+        result.push({ type: 'add', newLineNum: newLineNum++, text: newLines[newIdx] })
+        newIdx++
+      }
+      break
+    }
+  }
+  
+  return result
+})
+
+function computeLCS(a: string[], b: string[]): string[] {
+  const m = a.length
+  const n = b.length
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
+  
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+      }
+    }
+  }
+  
+  // Backtrack
+  const result: string[] = []
+  let i = m, j = n
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      result.unshift(a[i - 1])
+      i--
+      j--
+    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+      i--
+    } else {
+      j--
+    }
+  }
+  
+  return result
+}
 
 // Extract code blocks from text
 const codeBlocks = computed(() => {
@@ -110,10 +228,27 @@ const textWithoutCode = computed(() => {
             class="tool-call-item"
           >
             <div class="tool-call-header">
-              <span class="tool-icon">🔧</span>
+              <span class="tool-icon">{{ tc.name === 'edit' ? '✏️' : tc.name === 'write' ? '📝' : tc.name === 'read' ? '📖' : tc.name === 'bash' ? '💻' : '🔧' }}</span>
               <span class="tool-name">{{ tc.name }}</span>
+              <span v-if="tc.diff" class="diff-badge">diff</span>
             </div>
-            <details v-if="tc.args && tc.args !== '{}'" class="tool-args-details">
+            <!-- Edit tool diff view -->
+            <div v-if="tc.diff" class="edit-diff">
+              <div v-if="tc.diff.filePath" class="diff-file-path">📄 {{ tc.diff.filePath }}</div>
+              <div class="diff-content">
+                <div
+                  v-for="(line, idx) in editDiffLines"
+                  :key="idx"
+                  class="diff-line"
+                  :class="'diff-line--' + line.type"
+                >
+                  <span class="diff-line-prefix">{{ line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' ' }}</span>
+                  <span class="diff-line-text">{{ line.text }}</span>
+                </div>
+              </div>
+            </div>
+            <!-- Non-edit tool args -->
+            <details v-else-if="tc.args && tc.args !== '{}'" class="tool-args-details">
               <summary>Arguments</summary>
               <pre class="tool-args">{{ tc.args }}</pre>
             </details>
@@ -277,6 +412,82 @@ const textWithoutCode = computed(() => {
   border-radius: 4px;
   overflow-x: auto;
   font-size: 0.9em;
+}
+
+.diff-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-glow);
+  color: var(--accent-color);
+  font-size: 0.75em;
+  font-weight: 500;
+}
+
+.edit-diff {
+  margin-top: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.diff-file-path {
+  padding: 4px 10px;
+  background: var(--tool-header-bg);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.8em;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  color: var(--muted-color);
+}
+
+.diff-content {
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 0.82em;
+  line-height: 1.5;
+  overflow-x: auto;
+  background: var(--code-bg);
+}
+
+.diff-line {
+  display: flex;
+  min-height: 1.5em;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-line-prefix {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+}
+
+.diff-line-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.diff-line--add {
+  background: var(--success-bg);
+  color: var(--success-color);
+}
+
+.diff-line--add .diff-line-prefix {
+  color: var(--success-color);
+}
+
+.diff-line--remove {
+  background: var(--error-bg);
+  color: var(--error-color);
+}
+
+.diff-line--remove .diff-line-prefix {
+  color: var(--error-color);
+}
+
+.diff-line--context {
+  color: var(--text-color);
 }
 
 .tool-result-wrapper {

@@ -2,7 +2,7 @@
 import { ref } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useSessionStore } from '../../stores/session'
-import { piSetModel, piCycleModel, piGetAvailableModels, piSetThinkingLevel } from '../../ipc/bridge'
+import { piSetModel, piGetAvailableModels, piSetThinkingLevel } from '../../ipc/bridge'
 
 const settingsStore = useSettingsStore()
 const sessionStore = useSessionStore()
@@ -17,10 +17,6 @@ async function applyModel() {
   settingsStore.setProvider(providerInput.value)
   settingsStore.setModelId(modelInput.value)
   await piSetModel(providerInput.value, modelInput.value)
-}
-
-async function cycleModel() {
-  await piCycleModel()
 }
 
 async function refreshModels() {
@@ -64,7 +60,6 @@ async function changeThinkingLevel(level: string) {
 
     <div class="button-row">
       <button class="btn btn-primary" @click="applyModel">Apply Model</button>
-      <button class="btn btn-secondary" @click="cycleModel">Cycle Model</button>
       <button class="btn btn-secondary" @click="refreshModels">Refresh List</button>
     </div>
 

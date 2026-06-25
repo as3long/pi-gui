@@ -30,6 +30,16 @@ impl PiRpcClient {
         cwd: &str,
         app_handle: AppHandle,
     ) -> Result<(), String> {
+        self.spawn_with_model(cwd, app_handle, None)
+    }
+
+    /// Spawn pi with an optional --model flag.
+    pub fn spawn_with_model(
+        &mut self,
+        cwd: &str,
+        app_handle: AppHandle,
+        model: Option<&str>,
+    ) -> Result<(), String> {
         if self.is_running() {
             return Err("pi is already running".into());
         }
@@ -42,15 +52,24 @@ impl PiRpcClient {
 
         eprintln!("[PiGUI] Found pi at: {}", pi_path);
 
-        // Handle PowerShell scripts on Windows
+        // Build command
         let mut cmd = Command::new(&pi_path);
         let mut args = vec!["--mode", "rpc", "--no-session"];
+
+        // Add --model flag if specified
+        if let Some(m) = model {
+            eprintln!("[PiGUI] Setting model: {}", m);
+            args.push("--model");
+            args.push(m);
+        }
 
         // If pi is a .ps1 file, use powershell.exe to run it
         if pi_path.ends_with(".ps1") {
             eprintln!("[PiGUI] Using PowerShell to run .ps1 script");
+            let mut ps_args = vec!["-ExecutionPolicy", "Bypass", "-File", &pi_path];
+            ps_args.extend_from_slice(&args);
             cmd = Command::new("powershell.exe");
-            args = vec!["-ExecutionPolicy", "Bypass", "-File", &pi_path, "--mode", "rpc", "--no-session"];
+            args = ps_args;
         }
 
         eprintln!("[PiGUI] Spawning pi with args: {:?}", args);
@@ -211,7 +230,7 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
 }
 
 /// Find the pi binary in PATH or common locations.
-fn find_pi() -> Option<String> {
+pub fn find_pi() -> Option<String> {
     // Check PATH first - look for actual executables
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
