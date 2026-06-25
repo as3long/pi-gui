@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type {
   AgentMessage,
   AssistantMessage,
@@ -15,7 +15,7 @@ import type {
  */
 export const useChatStore = defineStore('chat', () => {
   // ── State ──
-  const messages = ref<AgentMessage[]>([])
+  const messages = ref<AgentMessage[]>(loadMessages())
   const isStreaming = ref(false)
   const isCompacting = ref(false)
   const isRetrying = ref(false)
@@ -30,6 +30,45 @@ export const useChatStore = defineStore('chat', () => {
     isComplete: true,
   })
 
+  // Watch for message changes and save to localStorage
+  watch(
+    () => messages.value,
+    (newMessages) => {
+      saveMessages(newMessages)
+    },
+    { deep: true }
+  )
+
+  // Load messages from localStorage
+  function loadMessages(): AgentMessage[] {
+    try {
+      const saved = localStorage.getItem('pi-gui:messages')
+      if (saved) {
+        const messages = JSON.parse(saved)
+        console.log('[ChatStore] Loaded messages from localStorage:', messages.length)
+        return messages
+      }
+    } catch (e) {
+      console.error('[ChatStore] Failed to load messages:', e)
+    }
+    console.log('[ChatStore] No saved messages found')
+    return []
+  }
+
+  // Save messages to localStorage
+  function saveMessages(msgs: AgentMessage[]) {
+    try {
+      // Don't save streaming messages or empty arrays
+      if (msgs.length === 0 || isStreaming.value) {
+        return
+      }
+      localStorage.setItem('pi-gui:messages', JSON.stringify(msgs))
+      console.log('[ChatStore] Saved messages to localStorage:', msgs.length)
+    } catch (e) {
+      console.error('[ChatStore] Failed to save messages:', e)
+    }
+  }
+
   // ── Computed ──
   const lastAssistantMessage = computed(() => {
     return [...messages.value].reverse().find((m) => m.role === 'assistant') as AssistantMessage | undefined
@@ -40,14 +79,21 @@ export const useChatStore = defineStore('chat', () => {
   // ── Actions ──
 
   function addMessage(msg: AgentMessage) {
+    console.log('[ChatStore] Adding message:', msg.role)
     messages.value.push(msg)
+    console.log('[ChatStore] Total messages:', messages.value.length)
   }
 
   function updateStreaming(event: RpcEvent) {
     if (event.type !== 'message_update') return
-    const msgEvent = event.assistant_message_event
-    if (!msgEvent) return
-
+    // Support both camelCase and snake_case field names
+    const msgEvent = (event as any).assistant_message_event || (event as any).assistantMessageEvent
+    if (!msgEvent) {
+      console.log('[ChatStore] No assistant message event found')
+      return
+    }
+    
+    console.log('[ChatStore] Updating streaming with event:', msgEvent.type)
     streamingMessage.value.isComplete = false
 
     switch (msgEvent.type) {
@@ -89,7 +135,9 @@ export const useChatStore = defineStore('chat', () => {
 
   function onToolExecutionStart(event: RpcEvent) {
     if (event.type !== 'tool_execution_start') return
-    const tc = streamingMessage.value.toolCalls.find((t) => t.id === event.toolCallId)
+    // Support both camelCase and snake_case field names
+    const toolCallId = (event as any).toolCallId || (event as any).tool_call_id
+    const tc = streamingMessage.value.toolCalls.find((t) => t.id === toolCallId)
     if (tc) {
       tc.isComplete = false
     }
@@ -97,8 +145,10 @@ export const useChatStore = defineStore('chat', () => {
 
   function onToolExecutionUpdate(event: RpcEvent) {
     if (event.type !== 'tool_execution_update') return
-    const text = event.partialResult?.content?.[0]?.text || ''
-    const tc = streamingMessage.value.toolCalls.find((t) => t.id === event.toolCallId)
+    // Support both camelCase and snake_case field names
+    const toolCallId = (event as any).toolCallId || (event as any).tool_call_id
+    const text = (event as any).partialResult?.content?.[0]?.text || ''
+    const tc = streamingMessage.value.toolCalls.find((t) => t.id === toolCallId)
     if (tc) {
       tc.result = (tc.result || '') + text
     }
@@ -106,15 +156,23 @@ export const useChatStore = defineStore('chat', () => {
 
   function onToolExecutionEnd(event: RpcEvent) {
     if (event.type !== 'tool_execution_end') return
-    const tc = streamingMessage.value.toolCalls.find((t) => t.id === event.toolCallId)
+    // Support both camelCase and snake_case field names
+    const toolCallId = (event as any).toolCallId || (event as any).tool_call_id
+    const isError = (event as any).isError || (event as any).is_error || false
+    const result = (event as any).result
+    const tc = streamingMessage.value.toolCalls.find((t) => t.id === toolCallId)
     if (tc) {
       tc.isComplete = true
-      tc.isError = event.isError || false
-      tc.result = event.result?.content?.[0]?.text || tc.result || ''
+      tc.isError = isError
+      tc.result = result?.content?.[0]?.text || tc.result || ''
     }
   }
 
   function finalizeStreaming() {
+    console.log('[ChatStore] Finalizing streaming...')
+    console.log('[ChatStore] Streaming text:', streamingMessage.value.text)
+    console.log('[ChatStore] Streaming thinking:', streamingMessage.value.thinking)
+    
     // Build final assistant message from streaming state
     const content: (TextContent | ThinkingContent | ToolCallContent)[] = []
 
@@ -135,12 +193,16 @@ export const useChatStore = defineStore('chat', () => {
       })
     }
 
+    console.log('[ChatStore] Content to add:', content.length, 'items')
+    
     if (content.length > 0) {
       const assistantMsg: AssistantMessage = {
         role: 'assistant',
         content,
       }
+      console.log('[ChatStore] Adding assistant message:', assistantMsg)
       messages.value.push(assistantMsg)
+      console.log('[ChatStore] Total messages after add:', messages.value.length)
     }
 
     // Also add tool result messages
@@ -167,13 +229,17 @@ export const useChatStore = defineStore('chat', () => {
 
   function clearMessages() {
     messages.value = []
+    localStorage.removeItem('pi-gui:messages')
   }
 
   // ── Event Handlers ──
 
   function handleEvent(event: RpcEvent) {
+    console.log('[ChatStore] Processing event:', event.type)
+    
     switch (event.type) {
       case 'agent_start':
+        console.log('[ChatStore] Agent started')
         isStreaming.value = true
         streamingMessage.value = {
           text: '',
@@ -184,15 +250,18 @@ export const useChatStore = defineStore('chat', () => {
         break
 
       case 'agent_end':
+        console.log('[ChatStore] Agent ended, finalizing...')
         isStreaming.value = false
         finalizeStreaming()
         break
 
       case 'message_update':
+        console.log('[ChatStore] Message update received')
         updateStreaming(event)
         break
 
       case 'message_end':
+        console.log('[ChatStore] Message end received')
         // We finalize on agent_end instead to batch all tool results
         break
 

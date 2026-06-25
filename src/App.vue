@@ -7,15 +7,32 @@ import SettingsPanel from './components/settings/SettingsPanel.vue'
 import ExtensionDialog from './components/extension/ExtensionDialog.vue'
 import SessionTree from './components/session/SessionTree.vue'
 import { FileTree } from './components/files'
-import { startEventListeners, clearEventHandlers, piNewSession, piCycleModel, piStart, piGetState } from './ipc/bridge'
+import { startEventListeners, clearEventHandlers, onPiEvent, piNewSession, piCycleModel, piStart, piGetState, piReadDirectory, piIsRunning, piDeleteFile } from './ipc/bridge'
+import { confirm } from '@tauri-apps/plugin-dialog'
+import { useChatStore } from './stores/chat'
+import CodeEditor from './components/editor/CodeEditor.vue'
 
 const settingsStore = useSettingsStore()
 const sessionStore = useSessionStore()
+const chatStore = useChatStore()
 
 const showSettings = ref(false)
 const showSessions = ref(false)
 const showFiles = ref(false)
+// File tree state
+const fileTreeData = ref<any[]>([])
+const openFile = ref<{ path: string; name: string; content: string; language: string; modified: boolean } | null>(null)
 let cleanupEvents: (() => void) | null = null
+
+async function loadDirectory(path: string) {
+  try {
+    const data = await piReadDirectory(path, 3)
+    fileTreeData.value = Array.isArray(data) ? data : []
+  } catch (e) {
+    console.error('Failed to read directory:', e)
+    fileTreeData.value = []
+  }
+}
 
 // Keyboard shortcuts
 function handleKeydown(e: KeyboardEvent) {
@@ -44,6 +61,13 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault()
     piCycleModel()
   }
+  // Ctrl/Cmd + S: Save file
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    e.preventDefault()
+    if (openFile.value?.modified) {
+      saveFile()
+    }
+  }
   // Escape: Close Settings
   if (e.key === 'Escape') {
     if (showSettings.value) showSettings.value = false
@@ -62,18 +86,36 @@ onMounted(async () => {
   // Start event listeners
   cleanupEvents = await startEventListeners()
 
+  // Register event handlers for stores
+  onPiEvent('*', (event) => {
+    console.log('[PiGUI] Received event:', event.type)
+    chatStore.handleEvent(event)
+    sessionStore.handleEvent(event)
+  })
+
   // Register keyboard shortcuts
   document.addEventListener('keydown', handleKeydown)
 
   // Auto-start pi process
   try {
     const cwd = settingsStore.cwd || 'C:\\Users\\huoying\\code'
-    await piStart(cwd)
-    sessionStore.isRunning = true
-    console.log('[PiGUI] Pi process started successfully')
+    
+    // Check if pi is already running
+    const alreadyRunning = await piIsRunning()
+    if (alreadyRunning) {
+      sessionStore.isRunning = true
+      console.log('[PiGUI] Pi is already running')
+    } else {
+      await piStart(cwd)
+      sessionStore.isRunning = true
+      console.log('[PiGUI] Pi process started successfully')
+    }
     
     // Get initial state
     await piGetState()
+    
+    // Load initial directory
+    await loadDirectory(cwd)
   } catch (e) {
     console.error('[PiGUI] Failed to auto-start pi:', e)
     // Don't show error to user, they can start manually
@@ -104,11 +146,118 @@ function handleFileSelect(file: any) {
   console.log('Selected file:', file)
 }
 
-function handleFileOpen(file: any) {
-  console.log('Opened file:', file)
+async function handleFileOpen(file: any) {
+  if (file.type === 'directory') {
+    settingsStore.setCwd(file.path)
+    await loadDirectory(file.path)
+  } else {
+    // Read and display file content
+    try {
+      const { readTextFile } = await import('@tauri-apps/plugin-fs')
+      const content = await readTextFile(file.path)
+      // Detect language from extension
+      const ext = file.name.split('.').pop()?.toLowerCase() || ''
+      const langMap: Record<string, string> = {
+        'js': 'javascript', 'jsx': 'javascript',
+        'ts': 'typescript', 'tsx': 'typescript',
+        'py': 'python',
+        'html': 'html', 'htm': 'html',
+        'css': 'css', 'scss': 'css',
+        'json': 'javascript',
+        'md': 'javascript',
+      }
+      const language = langMap[ext] || 'javascript'
+      openFile.value = { path: file.path, name: file.name, content, language, modified: false }
+    } catch (e) {
+      console.error('Failed to read file:', e)
+      openFile.value = { path: file.path, name: file.name, content: `Error reading file: ${e}`, language: 'javascript', modified: false }
+    }
+  }
+}
+
+function onFileContentChange(value: string) {
+  if (openFile.value) {
+    openFile.value.content = value
+    openFile.value.modified = true
+  }
+}
+
+async function saveFile() {
+  if (!openFile.value) return
+  try {
+    const { writeTextFile } = await import('@tauri-apps/plugin-fs')
+    await writeTextFile(openFile.value.path, openFile.value.content)
+    openFile.value.modified = false
+    console.log('[PiGUI] File saved successfully:', openFile.value.path)
+  } catch (e) {
+    console.error('[PiGUI] Failed to save file:', e)
+    alert(`Failed to save file: ${e}`)
+  }
+}
+
+async function closeFile() {
+  if (openFile.value?.modified) {
+    const discard = await confirm('File has unsaved changes. Discard?', { title: 'Unsaved Changes', kind: 'warning' })
+    if (!discard) {
+      return
+    }
+  }
+  openFile.value = null
+}
+
+async function handleOpenFolder() {
+  try {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: 'Select Project Folder',
+    })
+    if (selected) {
+      const folderPath = typeof selected === 'string' ? selected : selected
+      settingsStore.setCwd(folderPath)
+      await loadDirectory(folderPath)
+    }
+  } catch (e) {
+    console.error('Failed to open folder dialog:', e)
+    if (settingsStore.cwd) {
+      await loadDirectory(settingsStore.cwd)
+    }
+  }
 }
 
 // Reconnect handler
+async function handleFileDelete(file: any) {
+  const confirmed = await confirm(`Delete "${file.name}"?`, { title: 'Delete File', kind: 'warning' })
+  if (!confirmed) return
+
+  console.log('[PiGUI] Attempting to delete file:', file)
+  console.log('[PiGUI] File path:', file.path)
+
+  try {
+    await piDeleteFile(file.path)
+    // Remove the file from the local tree data
+    function removeFromTree(nodes: any[]): any[] {
+      return nodes.filter(n => n.path !== file.path).map(n => {
+        if (n.type === 'directory' && n.children) {
+          return { ...n, children: removeFromTree(n.children) }
+        }
+        return n
+      })
+    }
+    fileTreeData.value = removeFromTree(fileTreeData.value)
+    console.log('[PiGUI] Deleted:', file.path)
+  } catch (e) {
+    console.error('[PiGUI] Failed to delete file:', e)
+    alert(`Failed to delete: ${e}`)
+  }
+}
+
+async function handleFileRename(file: any, newName: string) {
+  // TODO: implement rename via Tauri command
+  console.log('[PiGUI] Rename requested:', file.path, '->', newName)
+}
+
 async function handleReconnect() {
   if (sessionStore.isRunning) return
   
@@ -167,16 +316,46 @@ async function handleReconnect() {
     <!-- File Tree Panel -->
     <aside v-if="showFiles" class="file-panel">
       <FileTree
-        :files="[]"
-        root-name="Project"
+        :files="fileTreeData"
+        :root-name="settingsStore.cwd ? settingsStore.cwd.split(/[\\\/]/).pop() || 'Project' : 'Project'"
         @select="handleFileSelect"
         @open="handleFileOpen"
+        @delete="handleFileDelete"
+        @rename="handleFileRename"
+        @refresh="settingsStore.cwd ? loadDirectory(settingsStore.cwd) : undefined"
       />
+      <div class="file-panel-footer">
+        <button class="open-folder-btn" @click="handleOpenFolder">
+          📂 Open Folder
+        </button>
+      </div>
     </aside>
 
     <!-- Main content -->
     <main class="main-content">
-      <ChatView v-if="!showSettings" />
+      <!-- File viewer -->
+      <div v-if="openFile" class="file-viewer">
+        <div class="file-viewer-header">
+          <span class="file-viewer-name">
+            📄 {{ openFile.name }}
+            <span v-if="openFile.modified" class="modified-indicator">●</span>
+          </span>
+          <span class="file-viewer-path">{{ openFile.path }}</span>
+          <button class="file-viewer-btn save-btn" @click="saveFile" :disabled="!openFile.modified" title="Save (Ctrl+S)">
+            💾 Save
+          </button>
+          <button class="file-viewer-close" @click="closeFile">✕</button>
+        </div>
+        <CodeEditor
+          :model-value="openFile.content"
+          :language="openFile.language as any"
+          :theme="settingsStore.darkMode ? 'dark' : 'light'"
+          :read-only="false"
+          class="file-viewer-editor"
+          @update:model-value="onFileContentChange"
+        />
+      </div>
+      <ChatView v-else-if="!showSettings" />
       <SettingsPanel v-else @close="showSettings = false" />
     </main>
     <!-- Extension UI Dialogs (modal) -->
@@ -188,35 +367,41 @@ async function handleReconnect() {
 /* ── CSS Variables (Theme) ── */
 :root,
 [data-theme="dark"] {
-  --bg-color: #1a1a2e;
-  --header-bg: #16213e;
-  --input-bg: #0f3460;
-  --sidebar-bg: #0f3460;
-  --text-color: #e0e0e0;
-  --muted-color: #8892b0;
-  --border-color: #2a3a5c;
-  --accent-color: #64ffda;
-  --accent-glow: rgba(100, 255, 218, 0.15);
-  --hover-bg: rgba(255, 255, 255, 0.05);
+  --bg-color: #1a1b1e;
+  --header-bg: #202124;
+  --input-bg: #2b2d31;
+  --sidebar-bg: #202124;
+  --text-color: #d4d4d8;
+  --muted-color: #8b8d94;
+  --border-color: #3a3c42;
+  --accent-color: #7c6bf5;
+  --accent-glow: rgba(124, 107, 245, 0.15);
+  --hover-bg: rgba(255, 255, 255, 0.06);
 
-  --user-bg: #1a3a5c;
-  --user-border: #2a5a8c;
-  --assistant-bg: #1e2a3e;
-  --badge-bg: rgba(100, 255, 218, 0.1);
-  --code-bg: #0d1b2a;
-  --thinking-bg: #1a1a2e;
-  --tool-bg: #1e2a3e;
-  --tool-header-bg: #16213e;
+  --user-bg: #2b2d31;
+  --user-border: #4a4d55;
+  --assistant-bg: #232428;
+  --badge-bg: rgba(124, 107, 245, 0.1);
+  --code-bg: #232428;
+  --thinking-bg: #1e1f22;
+  --tool-bg: #232428;
+  --tool-header-bg: #202124;
 
-  --success-bg: rgba(100, 255, 218, 0.1);
-  --success-color: #64ffda;
-  --warning-bg: rgba(255, 213, 79, 0.1);
-  --warning-color: #ffd54f;
-  --error-bg: rgba(255, 107, 107, 0.1);
-  --error-color: #ff6b6b;
-  --info-bg: rgba(100, 149, 237, 0.1);
+  --success-bg: rgba(34, 197, 94, 0.1);
+  --success-color: #22c55e;
+  --warning-bg: rgba(234, 179, 8, 0.1);
+  --warning-color: #eab308;
+  --error-bg: rgba(239, 68, 68, 0.1);
+  --error-color: #ef4444;
+  --info-bg: rgba(59, 130, 246, 0.1);
 
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Segoe UI",
+    sans-serif;
   font-size: 14px;
   line-height: 1.5;
   color: var(--text-color);
@@ -224,33 +409,33 @@ async function handleReconnect() {
 }
 
 [data-theme="light"] {
-  --bg-color: #ffffff;
-  --header-bg: #f8f9fa;
-  --input-bg: #f0f2f5;
-  --sidebar-bg: #f0f2f5;
-  --text-color: #1a1a2e;
-  --muted-color: #6c757d;
-  --border-color: #dee2e6;
-  --accent-color: #0d6efd;
-  --accent-glow: rgba(13, 110, 253, 0.15);
+  --bg-color: #f8f8fb;
+  --header-bg: #f4f5f8;
+  --input-bg: #ffffff;
+  --sidebar-bg: #f4f5f8;
+  --text-color: #39435b;
+  --muted-color: #747d93;
+  --border-color: #dde1ea;
+  --accent-color: #6a55f2;
+  --accent-glow: rgba(106, 85, 242, 0.15);
   --hover-bg: rgba(0, 0, 0, 0.03);
 
-  --user-bg: #cfe2ff;
-  --user-border: #9ec5fe;
-  --assistant-bg: #f8f9fa;
-  --badge-bg: rgba(13, 110, 253, 0.08);
-  --code-bg: #f4f4f4;
-  --thinking-bg: #f0f2f5;
-  --tool-bg: #f8f9fa;
-  --tool-header-bg: #e9ecef;
+  --user-bg: #ffffff;
+  --user-border: #d2d7e2;
+  --assistant-bg: #f1f3f7;
+  --badge-bg: rgba(106, 85, 242, 0.08);
+  --code-bg: #f2f4f8;
+  --thinking-bg: #f1f3f7;
+  --tool-bg: #f1f3f7;
+  --tool-header-bg: #e8eaf0;
 
-  --success-bg: rgba(25, 135, 84, 0.1);
-  --success-color: #198754;
-  --warning-bg: rgba(255, 193, 7, 0.1);
-  --warning-color: #ffc107;
-  --error-bg: rgba(220, 53, 69, 0.1);
-  --error-color: #dc3545;
-  --info-bg: rgba(13, 110, 253, 0.08);
+  --success-bg: rgba(34, 197, 94, 0.1);
+  --success-color: #16a34a;
+  --warning-bg: rgba(234, 179, 8, 0.1);
+  --warning-color: #ca8a04;
+  --error-bg: rgba(239, 68, 68, 0.1);
+  --error-color: #dc2626;
+  --info-bg: rgba(59, 130, 246, 0.08);
 }
 
 /* ── Global Reset ── */
@@ -283,6 +468,11 @@ html, body, #app {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--muted-color);
 }
+
+/* Message content styling */
+.text-content p {
+  margin: 0;
+}
 </style>
 
 <style scoped>
@@ -303,13 +493,13 @@ html, body, #app {
 }
 
 .sidebar-header {
-  padding: 16px 0;
+  padding: 12px 0;
   text-align: center;
   border-bottom: 1px solid var(--border-color);
 }
 
 .app-title {
-  font-size: 1.4em;
+  font-size: 1.2em;
   font-weight: 700;
   color: var(--accent-color);
   letter-spacing: -0.05em;
@@ -320,23 +510,24 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 0;
-  gap: 4px;
+  padding: 6px 0;
+  gap: 2px;
 }
 
 .nav-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
-  width: 48px;
-  padding: 8px 4px;
+  gap: 1px;
+  width: 44px;
+  padding: 6px 4px;
   border: none;
   background: transparent;
   color: var(--muted-color);
   cursor: pointer;
   border-radius: 8px;
   transition: all 0.15s;
+  font-size: 14px;
 }
 
 .nav-btn:hover {
@@ -350,16 +541,16 @@ html, body, #app {
 }
 
 .nav-icon {
-  font-size: 1.2em;
+  font-size: 1.1em;
 }
 
 .nav-label {
-  font-size: 0.65em;
+  font-size: 0.6em;
   font-weight: 500;
 }
 
 .sidebar-footer {
-  padding: 12px 0;
+  padding: 8px 0;
   text-align: center;
   border-top: 1px solid var(--border-color);
 }
@@ -368,10 +559,10 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   cursor: pointer;
-  padding: 8px;
-  border-radius: 6px;
+  padding: 6px;
+  border-radius: 5px;
   transition: background 0.15s;
 }
 
@@ -380,8 +571,8 @@ html, body, #app {
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--muted-color);
 }
@@ -392,7 +583,7 @@ html, body, #app {
 }
 
 .status-text {
-  font-size: 0.6em;
+  font-size: 0.55em;
   color: var(--muted-color);
 }
 
@@ -410,10 +601,127 @@ html, body, #app {
   flex-shrink: 0;
   border-right: 1px solid var(--border-color);
   background: var(--bg-color);
+  display: flex;
+  flex-direction: column;
+}
+
+.file-panel-footer {
+  padding: 6px 10px;
+  border-top: 1px solid var(--border-color);
+  background: var(--header-bg);
+}
+
+.open-folder-btn {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px dashed var(--border-color);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-color);
+  cursor: pointer;
+  font-size: 0.85em;
+  transition: all 0.15s;
+}
+
+.open-folder-btn:hover {
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+  background: var(--badge-bg);
 }
 
 /* ── Main Content ── */
 .main-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── File Viewer ── */
+.file-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-color);
+}
+
+.file-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.file-viewer-name {
+  font-weight: 600;
+  color: var(--text-color);
+  font-size: 0.9em;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.modified-indicator {
+  color: var(--warning-color);
+  font-size: 1.2em;
+}
+
+.file-viewer-path {
+  font-size: 0.75em;
+  color: var(--muted-color);
+  font-family: ui-monospace, 'SF Mono', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.file-viewer-close {
+  background: none;
+  border: none;
+  color: var(--muted-color);
+  cursor: pointer;
+  font-size: 1em;
+  padding: 3px 6px;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.file-viewer-close:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+
+.file-viewer-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--muted-color);
+  cursor: pointer;
+  font-size: 0.8em;
+  padding: 3px 10px;
+  border-radius: 5px;
+  transition: all 0.15s;
+}
+
+.file-viewer-btn:hover:not(:disabled) {
+  background: var(--hover-bg);
+  color: var(--text-color);
+  border-color: var(--accent-color);
+}
+
+.file-viewer-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.save-btn:hover:not(:disabled) {
+  background: var(--success-bg);
+  color: var(--success-color);
+  border-color: var(--success-color);
+}
+
+.file-viewer-editor {
   flex: 1;
   overflow: hidden;
 }

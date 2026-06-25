@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
+defineOptions({ name: 'FileTreeItem' })
+
 interface FileNode {
   name: string
   path: string

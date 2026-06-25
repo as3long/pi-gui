@@ -5,6 +5,22 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "opener:default",
+    "fs:default",
+    "fs:allow-read-dir",
+    "fs:allow-read-file",
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [{ "path": "**" }]
+    },
+    "fs:allow-write-file",
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "**" }]
+    },
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-confirm",
+    "dialog:allow-ask"
   ]
 }

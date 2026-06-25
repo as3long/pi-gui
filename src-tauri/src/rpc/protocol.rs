@@ -150,16 +150,16 @@ pub struct ImageContent {
 }
 
 // Simple commands
-rpc_command!(AbortCommand {});
-rpc_command!(GetStateCommand {});
-rpc_command!(GetMessagesCommand {});
-rpc_command!(CycleModelCommand {});
-rpc_command!(GetAvailableModelsCommand {});
+rpc_command!(AbortCommand {}, "abort");
+rpc_command!(GetStateCommand {}, "get_state");
+rpc_command!(GetMessagesCommand {}, "get_messages");
+rpc_command!(CycleModelCommand {}, "cycle_model");
+rpc_command!(GetAvailableModelsCommand {}, "get_available_models");
 rpc_command!(NewSessionCommand {
     #[serde(skip_serializing_if = "Option::is_none", rename = "parentSession")]
     parent_session: Option<String>,
-});
-rpc_command!(GetSessionStatsCommand {});
+}, "new_session");
+rpc_command!(GetSessionStatsCommand {}, "get_session_stats");
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -236,7 +236,7 @@ impl ForkCommand {
 }
 
 // Simple commands
-rpc_command!(ListSessionsCommand {});
+rpc_command!(ListSessionsCommand {}, "list_sessions");
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

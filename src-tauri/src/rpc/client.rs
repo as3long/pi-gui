@@ -55,6 +55,14 @@ impl PiRpcClient {
 
         eprintln!("[PiGUI] Spawning pi with args: {:?}", args);
 
+        // Hide console window on Windows
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+
         let mut child = cmd
             .args(&args)
             .current_dir(cwd)

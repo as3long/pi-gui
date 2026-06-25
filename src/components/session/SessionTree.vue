@@ -2,10 +2,37 @@
 import { ref, computed, onMounted } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
-import { piListSessions, piNewSession, piSwitchSession, piFork } from '../../ipc/bridge'
+import { piNewSession, piSwitchSession, piFork, piReadSession, piReadDirectory, piGetHomeDir } from '../../ipc/bridge'
 
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
+
+// Helper functions for display
+function formatDate(dateStr: string): string {
+  try {
+    const date = new Date(dateStr)
+    if (isNaN(date.getTime())) return dateStr
+    // Convert to Beijing time (UTC+8)
+    const bj = new Date(date.getTime() + (8 * 60 + date.getTimezoneOffset()) * 60000)
+    const m = bj.getMonth() + 1
+    const d = bj.getDate()
+    const hh = String(bj.getHours()).padStart(2, '0')
+    const mm = String(bj.getMinutes()).padStart(2, '0')
+    return `${m}/${d} ${hh}:${mm}`
+  } catch {
+    return dateStr
+  }
+}
+
+function shortenPath(path: string): string {
+  if (!path) return ''
+  // Convert Windows path format to readable
+  const readable = path.replace(/--/g, ':\\').replace(/-/g, '/')
+  // Show last 2 parts of path
+  const parts = readable.split('/').filter(Boolean)
+  if (parts.length <= 3) return readable
+  return '...' + parts.slice(-3).join('/')
+}
 
 const isLoading = ref(false)
 const error = ref<string | null>(null)
@@ -22,11 +49,7 @@ function getSessionTag(sessionId: string) {
   return sessionTags.value[sessionId] || null
 }
 
-function setSessionTag(sessionId: string, name: string, color: string) {
-  sessionTags.value[sessionId] = { name, color }
-  // Persist to localStorage
-  localStorage.setItem('sessionTags', JSON.stringify(sessionTags.value))
-}
+
 
 // Export sessions
 function exportSessions() {
@@ -46,9 +69,52 @@ function exportSessions() {
 
 // Import sessions
 const fileInput = ref<HTMLInputElement | null>(null)
+const jsonlFileInput = ref<HTMLInputElement | null>(null)
 
 function importSessions() {
   fileInput.value?.click()
+}
+
+function importJsonlSession() {
+  jsonlFileInput.value?.click()
+}
+
+async function handleJsonlImport(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  try {
+    const content = await file.text()
+    const lines = content.split('\n').filter(l => l.trim())
+    
+    // Parse JSONL and extract messages
+    const messages: any[] = []
+    
+    for (const line of lines) {
+      try {
+        const entry = JSON.parse(line)
+        if (entry.type === 'message') {
+          messages.push(entry.message)
+        }
+      } catch {}
+    }
+    
+    if (messages.length > 0) {
+      // Load messages into chat store
+      chatStore.clearMessages()
+      for (const msg of messages) {
+        chatStore.addMessage(msg)
+      }
+      alert(`Loaded ${messages.length} messages from ${file.name}`)
+    } else {
+      alert('No messages found in file')
+    }
+  } catch (err) {
+    alert('Failed to parse JSONL file: ' + err)
+  }
+  
+  input.value = ''
 }
 
 function handleFileImport(event: Event) {
@@ -109,11 +175,112 @@ const filteredSessions = computed(() => {
   )
 })
 
+interface SessionMetadata {
+  sessionId: string
+  timestamp: string
+  cwd: string
+  name?: string
+  model?: string
+  provider?: string
+  messageCount: number
+}
+
+async function readSessionMetadata(filePath: string): Promise<SessionMetadata | null> {
+  try {
+    // Read the session file using piReadSession which returns parsed content
+    const sessionData = await piReadSession(filePath)
+    if (!sessionData) return null
+    
+    // Extract metadata from the parsed session
+    const sessionHeader = sessionData.session_info || sessionData
+    const messages = sessionData.messages || []
+    
+    // Normalize timestamp format (handle T04-13-35 style)
+    const rawTs = sessionHeader.timestamp || ''
+    const timestamp = rawTs.replace(
+      /(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z/,
+      '$1:$2:$3.$4Z'
+    )
+
+    // Find first user message as session name
+    const firstUserMsg = messages.find((m: any) => m.role === 'user')
+    let name: string | undefined
+    if (firstUserMsg) {
+      const content = firstUserMsg.content
+      const text = Array.isArray(content)
+        ? content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join(' ')
+        : typeof content === 'string' ? content : ''
+      name = text.trim().replace(/\n+/g, ' ').slice(0, 60) || undefined
+    }
+
+    return {
+      sessionId: sessionHeader.id || '',
+      timestamp,
+      cwd: sessionHeader.cwd || '',
+      name: name || sessionHeader.name || sessionHeader.sessionName || undefined,
+      model: sessionHeader.model?.modelId || sessionHeader.modelId || undefined,
+      provider: sessionHeader.model?.provider || sessionHeader.provider || undefined,
+      messageCount: messages.filter((m: any) => m.role === 'user' || m.role === 'assistant').length
+    }
+  } catch (e) {
+    console.warn('[SessionTree] Failed to read session metadata:', filePath, e)
+    return null
+  }
+}
+
 async function loadSessions() {
   isLoading.value = true
   error.value = null
   try {
-    await piListSessions()
+    // Scan pi's session directory directly
+    const homeDir = await piGetHomeDir().catch(() => '')
+    if (homeDir) {
+      const sessionDir = `${homeDir}/.pi/agent/sessions`
+      const sessionFiles = await piReadDirectory(sessionDir, 2).catch(() => [])
+      
+      // Add discovered sessions to the list
+      if (Array.isArray(sessionFiles)) {
+        for (const projectDir of sessionFiles) {
+          if (projectDir.type === 'directory' && projectDir.children) {
+            for (const sessionFile of projectDir.children) {
+              if (sessionFile.name?.endsWith('.jsonl')) {
+                const existing = sessionStore.sessions.find(s => s.path === sessionFile.path)
+                if (!existing) {
+                  // Parse session file name: timestamp_sessionId.jsonl
+                  const nameParts = sessionFile.name.replace('.jsonl', '').split('_')
+                  const timestamp = nameParts[0] || ''
+                  const sessionId = nameParts[1] || sessionFile.name
+                  
+                  // Normalize filename timestamp: 2026-06-25T04-13-35-582Z → 2026-06-25T04:13:35.582Z
+                  const normalizedTs = timestamp.replace(
+                    /(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z/,
+                    '$1:$2:$3.$4Z'
+                  )
+                  
+                  // Read metadata from the session file
+                  const metadata = await readSessionMetadata(sessionFile.path)
+                  
+                  // Format project path for display
+                  const projectPath = projectDir.name?.replace(/--/g, ':\\').replace(/-/g, '/') || ''
+                  
+                  sessionStore.sessions.push({
+                    id: sessionId,
+                    path: sessionFile.path,
+                    name: metadata?.name || projectPath || sessionId,
+                    cwd: metadata?.cwd || projectPath || '',
+                    createdAt: metadata?.timestamp || normalizedTs,
+                    messageCount: metadata?.messageCount || 0,
+                    // Store additional metadata for display
+                    provider: metadata?.provider,
+                    model: metadata?.model,
+                  } as any)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   } catch (e) {
     error.value = String(e)
   } finally {
@@ -129,6 +296,24 @@ async function createNewSession() {
 async function switchToSession(path: string) {
   await piSwitchSession(path)
   chatStore.clearMessages()
+}
+
+async function openSession(session: any) {
+  if (!session.path) return
+  try {
+    const data = await piReadSession(session.path)
+    if (!data?.messages?.length) return
+    chatStore.clearMessages()
+    for (const msg of data.messages) {
+      chatStore.addMessage(msg)
+    }
+    // Update current session in store
+    sessionStore.currentSessionId = session.id
+    sessionStore.currentSessionFile = session.path
+    sessionStore.sessionName = session.name || null
+  } catch (e) {
+    console.warn('[SessionTree] Failed to open session:', e)
+  }
 }
 
 async function forkSession(entryId: string) {
@@ -166,8 +351,11 @@ onMounted(() => {
         <button class="btn-action" @click="exportSessions" title="Export">
           📤
         </button>
-        <button class="btn-action" @click="importSessions" title="Import">
+        <button class="btn-action" @click="importSessions" title="Import Tags">
           📥
+        </button>
+        <button class="btn-action" @click="importJsonlSession" title="Import JSONL Session">
+          📄
         </button>
         <input
           ref="fileInput"
@@ -175,6 +363,13 @@ onMounted(() => {
           accept=".json"
           style="display: none"
           @change="handleFileImport"
+        />
+        <input
+          ref="jsonlFileInput"
+          type="file"
+          accept=".jsonl"
+          style="display: none"
+          @change="handleJsonlImport"
         />
       </div>
     </div>
@@ -204,6 +399,7 @@ onMounted(() => {
         }"
         draggable="true"
         @click="switchToSession(session.path)"
+        @dblclick="openSession(session)"
         @dragstart="onDragStart(session.id)"
         @dragover="onDragOver(session.id, $event)"
         @dragleave="onDragLeave"
@@ -211,13 +407,13 @@ onMounted(() => {
         @dragend="onDragEnd"
       >
         <div class="drag-handle">⋮⋮</div>
-        <div class="session-icon">📋</div>
-        <div class="session-details">
+        <div class="session-body">
           <div class="session-name">{{ session.name || session.id }}</div>
-          <div class="session-meta">
-            <span>{{ session.messageCount }} messages</span>
-            <span>·</span>
-            <span>{{ new Date(session.createdAt).toLocaleDateString() }}</span>
+          <div class="session-time">{{ formatDate(session.createdAt) }}</div>
+          <div class="session-row-meta">
+            <span v-if="session.cwd" class="session-cwd" :title="session.cwd">📁 {{ shortenPath(session.cwd) }}</span>
+            <span v-if="(session as any).model" class="session-model">{{ (session as any).model }}</span>
+            <span v-if="session.messageCount" class="session-msgs">{{ session.messageCount }} msgs</span>
           </div>
         </div>
         <!-- Tags -->
@@ -227,14 +423,7 @@ onMounted(() => {
         <!-- Actions -->
         <div class="session-actions">
           <button
-            class="btn-action"
-            title="Add Tag"
-            @click.stop="setSessionTag(session.id, 'Important', 'tag-blue')"
-          >
-            🏷️
-          </button>
-          <button
-            class="btn-fork"
+            class="btn-session-action"
             title="Fork Session"
             @click.stop="forkSession(session.id)"
           >
@@ -259,7 +448,7 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border-color);
   background: var(--header-bg);
 }
@@ -309,13 +498,16 @@ onMounted(() => {
 }
 
 .session-tree-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 8px 10px;
   border-radius: 8px;
   cursor: pointer;
   transition: background 0.15s;
+  border: 1px solid transparent;
+  margin-bottom: 2px;
 }
 
 .session-tree-item:hover {
@@ -324,49 +516,76 @@ onMounted(() => {
 
 .session-tree-item.active {
   background: var(--badge-bg);
-  border: 1px solid var(--accent-color);
+  border-color: var(--accent-color);
 }
 
-.session-icon {
-  font-size: 1.1em;
-  flex-shrink: 0;
-}
-
-.session-details {
+.session-body {
   flex: 1;
   min-width: 0;
 }
 
 .session-name {
-  font-size: 0.85em;
+  font-size: 13px;
   font-weight: 500;
   color: var(--text-color);
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.session-meta {
-  display: flex;
-  gap: 6px;
-  font-size: 0.7em;
+.session-time {
+  font-size: 11px;
   color: var(--muted-color);
+  line-height: 1.4;
+  margin-top: 1px;
+}
+
+.session-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted-color);
+  line-height: 1.3;
   margin-top: 2px;
 }
 
+.session-cwd {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.7;
+}
+
+.session-model {
+  flex-shrink: 0;
+  color: var(--accent-color);
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+.session-msgs {
+  flex-shrink: 0;
+  white-space: nowrap;
+  opacity: 0.6;
+}
+
 .search-wrapper {
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border-color);
 }
 
 .search-input {
   width: 100%;
-  padding: 8px 10px;
+  padding: 8px 12px;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--input-bg);
   color: var(--text-color);
-  font-size: 0.85em;
+  font-size: 13px;
   outline: none;
 }
 
@@ -374,37 +593,35 @@ onMounted(() => {
   border-color: var(--accent-color);
 }
 
-.btn-fork {
+.btn-session-action {
   background: none;
-  border: 1px solid var(--border-color);
+  border: none;
   border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 0.9em;
+  padding: 2px 4px;
+  font-size: 12px;
   cursor: pointer;
-  opacity: 0;
   transition: all 0.15s;
+  line-height: 1;
 }
 
-.session-tree-item:hover .btn-fork {
-  opacity: 1;
-}
-
-.btn-fork:hover {
+.btn-session-action:hover {
   background: var(--hover-bg);
-  border-color: var(--accent-color);
 }
 
 /* Drag and Drop */
 .drag-handle {
   cursor: grab;
   color: var(--muted-color);
-  font-size: 0.9em;
+  font-size: 10px;
   opacity: 0;
   transition: opacity 0.15s;
+  flex-shrink: 0;
+  margin-top: 2px;
+  line-height: 1;
 }
 
 .session-tree-item:hover .drag-handle {
-  opacity: 0.6;
+  opacity: 0.5;
 }
 
 .drag-handle:active {
@@ -412,7 +629,7 @@ onMounted(() => {
 }
 
 .session-tree-item.dragging {
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .session-tree-item.drag-over {
@@ -421,11 +638,12 @@ onMounted(() => {
 
 /* Tags */
 .session-tag {
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 0.65em;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
   font-weight: 500;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tag-blue {
@@ -455,8 +673,9 @@ onMounted(() => {
 
 /* Actions */
 .session-actions {
-  display: flex;
-  gap: 4px;
+  position: absolute;
+  top: 6px;
+  right: 6px;
   opacity: 0;
   transition: opacity 0.15s;
 }

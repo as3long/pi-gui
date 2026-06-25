@@ -51,6 +51,7 @@ onMounted(async () => {
     <!-- Streaming message (not yet finalized) -->
     <div v-if="!chatStore.streamingMessage.isComplete" class="streaming-wrapper">
       <div class="message-row assistant-row">
+        <div class="message-label">Pi</div>
         <div class="message-bubble assistant-bubble streaming-bubble">
           <!-- Thinking block -->
           <div v-if="chatStore.streamingMessage.thinking" class="thinking-block">
@@ -94,7 +95,7 @@ onMounted(async () => {
 
 <style scoped>
 .message-list {
-  padding: 16px;
+  padding: 12px 16px;
   height: 100%;
   overflow-y: auto;
 }
@@ -136,25 +137,44 @@ onMounted(async () => {
 
 .message-row {
   display: flex;
-  margin-bottom: 12px;
+  flex-direction: column;
+  margin-bottom: 8px;
+}
+
+.message-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-color);
+  margin-bottom: 4px;
+  padding: 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .message-bubble {
-  max-width: 85%;
+  width: min(720px, 100%);
   padding: 10px 14px;
   border-radius: 12px;
-  line-height: 1.5;
-  font-size: 0.95em;
+  border: 1px solid var(--border-color);
+  line-height: 1.55;
+  font-size: 13px;
+}
+
+.user-row {
+  align-items: flex-end;
+}
+
+.user-bubble {
+  background: var(--user-bg);
+  border-color: var(--user-border);
 }
 
 .assistant-row {
-  justify-content: flex-start;
+  align-items: flex-start;
 }
 
 .assistant-bubble {
   background: var(--assistant-bg);
-  border: 1px solid var(--border-color);
-  border-top-left-radius: 4px;
 }
 
 .streaming-bubble {
@@ -184,8 +204,13 @@ onMounted(async () => {
 }
 
 .text-content {
+  color: var(--text-color);
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+.text-content :deep(p) {
+  margin: 0;
 }
 
 .cursor-blink {
@@ -215,7 +240,7 @@ onMounted(async () => {
   background: var(--tool-bg);
   border-radius: 4px;
   font-size: 0.85em;
-  font-family: 'SF Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', monospace;
 }
 
 .tool-icon {

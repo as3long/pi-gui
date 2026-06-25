@@ -139,7 +139,7 @@ const textWithoutCode = computed(() => {
 .message-row {
   display: flex;
   flex-direction: column;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
   animation: slideIn 0.15s ease-out;
 }
 
@@ -149,19 +149,22 @@ const textWithoutCode = computed(() => {
 }
 
 .message-label {
-  font-size: 0.8em;
+  font-size: 11px;
   font-weight: 600;
   color: var(--muted-color);
   margin-bottom: 4px;
   padding: 0 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .message-bubble {
-  max-width: 85%;
+  width: min(720px, 100%);
   padding: 10px 14px;
   border-radius: 12px;
-  line-height: 1.5;
-  font-size: 0.95em;
+  border: 1px solid var(--border-color);
+  line-height: 1.55;
+  font-size: 13px;
 }
 
 .user-row {
@@ -170,8 +173,7 @@ const textWithoutCode = computed(() => {
 
 .user-bubble {
   background: var(--user-bg);
-  border: 1px solid var(--user-border);
-  border-bottom-right-radius: 4px;
+  border-color: var(--user-border);
 }
 
 .assistant-row {
@@ -180,8 +182,6 @@ const textWithoutCode = computed(() => {
 
 .assistant-bubble {
   background: var(--assistant-bg);
-  border: 1px solid var(--border-color);
-  border-top-left-radius: 4px;
 }
 
 .tool-result-row {
@@ -221,8 +221,13 @@ const textWithoutCode = computed(() => {
 }
 
 .text-content {
+  color: var(--text-color);
   white-space: pre-wrap;
   word-wrap: break-word;
+}
+
+.text-content :deep(p) {
+  margin: 0;
 }
 
 .tool-calls-section {
@@ -243,7 +248,7 @@ const textWithoutCode = computed(() => {
   background: var(--tool-header-bg);
   border-radius: 4px;
   font-size: 0.85em;
-  font-family: 'SF Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', monospace;
 }
 
 .tool-icon {
@@ -284,7 +289,7 @@ const textWithoutCode = computed(() => {
   gap: 6px;
   padding: 6px 10px;
   background: var(--tool-header-bg);
-  font-family: 'SF Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', monospace;
   font-size: 0.9em;
 }
 

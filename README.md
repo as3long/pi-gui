@@ -1,5 +1,5 @@
 # Pi GUI
-
+  
 <div align="center">
 
 ![Pi GUI Logo](src-tauri/icons/logo.svg)

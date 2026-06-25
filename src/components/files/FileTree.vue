@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import FileTreeItem from './FileTreeItem.vue'
 
 interface FileNode {
   name: string
@@ -56,6 +57,20 @@ function openFile(file: FileNode) {
   } else {
     toggleDir(file.path)
   }
+}
+
+function handleOpen() {
+  if (contextMenu.value) {
+    emit('open', contextMenu.value.file)
+  }
+  hideContextMenu()
+}
+
+function handleDelete() {
+  if (contextMenu.value) {
+    emit('delete', contextMenu.value.file)
+  }
+  hideContextMenu()
 }
 
 function handleRename() {
@@ -149,14 +164,14 @@ const filteredFiles = computed(() => {
         class="context-menu"
         :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
       >
-        <div class="context-item" @click="emit('open', contextMenu.file)">
+        <div class="context-item" @click="handleOpen">
           📂 Open
         </div>
         <div class="context-item" @click="handleRename">
           ✏️ Rename
         </div>
         <div class="context-divider"></div>
-        <div class="context-item danger" @click="emit('delete', contextMenu.file)">
+        <div class="context-item danger" @click="handleDelete">
           🗑️ Delete
         </div>
       </div>

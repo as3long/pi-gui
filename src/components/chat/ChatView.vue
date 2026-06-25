@@ -13,25 +13,44 @@ const settingsStore = useSettingsStore()
 let messageIdCounter = 0
 
 async function onSend(message: string) {
+  console.log('[PiGUI] onSend called with:', message)
+  
   // Auto-start pi if not running
   if (!sessionStore.isRunning) {
     try {
       const cwd = settingsStore.cwd || 'C:\\Users\\huoying\\code'
+      console.log('[PiGUI] Starting pi with cwd:', cwd)
       await piStart(cwd)
       sessionStore.isRunning = true
     } catch (e) {
-      console.error('Failed to start pi:', e)
+      console.error('[PiGUI] Failed to start pi:', e)
       return
     }
   }
 
   const id = `msg-${++messageIdCounter}`
+  console.log('[PiGUI] Sending message with id:', id)
 
-  if (chatStore.isStreaming) {
-    // Queue as steer during streaming
-    await piSteer(id, message)
-  } else {
-    await piPrompt(id, message)
+  // Add user message to chat immediately
+  chatStore.addMessage({
+    role: 'user',
+    content: message,
+    timestamp: Date.now(),
+  })
+  console.log('[PiGUI] User message added to chat')
+
+  try {
+    if (chatStore.isStreaming) {
+      // Queue as steer during streaming
+      console.log('[PiGUI] Sending as steer')
+      await piSteer(id, message)
+    } else {
+      console.log('[PiGUI] Sending as prompt')
+      await piPrompt(id, message)
+    }
+    console.log('[PiGUI] Message sent successfully')
+  } catch (e) {
+    console.error('[PiGUI] Failed to send message:', e)
   }
 }
 
@@ -127,7 +146,7 @@ async function onRefreshStats() {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 16px;
+  padding: 6px 12px;
   border-bottom: 1px solid var(--border-color);
   background: var(--header-bg);
   font-size: 0.85em;
@@ -203,7 +222,7 @@ async function onRefreshStats() {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 16px;
+  padding: 6px 12px;
   background: var(--error-bg);
   color: var(--error-color);
   font-size: 0.85em;
@@ -224,7 +243,7 @@ async function onRefreshStats() {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 16px;
+  padding: 4px 12px;
   background: var(--header-bg);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;

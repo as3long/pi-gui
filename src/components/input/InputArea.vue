@@ -145,19 +145,19 @@ defineExpose({ focusInput })
 
 <style scoped>
 .input-area {
-  padding: 8px 16px 12px;
+  padding: 6px 12px 8px;
   background: var(--input-bg);
 }
 
 .queue-banner {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  margin-bottom: 8px;
+  gap: 6px;
+  padding: 3px 8px;
+  margin-bottom: 6px;
   background: var(--warning-bg);
-  border-radius: 6px;
-  font-size: 0.8em;
+  border-radius: 5px;
+  font-size: 0.75em;
 }
 
 .queue-banner.follow-up {
@@ -175,12 +175,12 @@ defineExpose({ focusInput })
 
 .input-row {
   display: flex;
-  gap: 8px;
-  align-items: flex-end;
+  gap: 6px;
+  align-items: center;
   background: var(--bg-color);
   border: 1px solid var(--border-color);
-  border-radius: 12px;
-  padding: 8px;
+  border-radius: 10px;
+  padding: 6px;
   transition: border-color 0.2s;
 }
 
@@ -194,13 +194,14 @@ defineExpose({ focusInput })
   border: none;
   background: transparent;
   color: var(--text-color);
-  font-size: 0.95em;
+  font-size: 13px;
   font-family: inherit;
-  line-height: 1.5;
+  line-height: 1.4;
   resize: none;
   outline: none;
-  max-height: 200px;
+  max-height: 150px;
   padding: 4px;
+  box-sizing: border-box;
 }
 
 .input-textarea::placeholder {
@@ -221,12 +222,12 @@ defineExpose({ focusInput })
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 1em;
+  font-size: 0.9em;
   transition: background 0.15s, opacity 0.15s;
 }
 
