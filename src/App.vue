@@ -7,7 +7,7 @@ import SettingsPanel from './components/settings/SettingsPanel.vue'
 import ExtensionDialog from './components/extension/ExtensionDialog.vue'
 import SessionTree from './components/session/SessionTree.vue'
 import { FileTree } from './components/files'
-import { startEventListeners, clearEventHandlers, piNewSession, piCycleModel } from './ipc/bridge'
+import { startEventListeners, clearEventHandlers, piNewSession, piCycleModel, piStart, piGetState } from './ipc/bridge'
 
 const settingsStore = useSettingsStore()
 const sessionStore = useSessionStore()
@@ -65,6 +65,19 @@ onMounted(async () => {
   // Register keyboard shortcuts
   document.addEventListener('keydown', handleKeydown)
 
+  // Auto-start pi process
+  try {
+    const cwd = settingsStore.cwd || 'C:\\Users\\huoying\\code'
+    await piStart(cwd)
+    sessionStore.isRunning = true
+    console.log('[PiGUI] Pi process started successfully')
+    
+    // Get initial state
+    await piGetState()
+  } catch (e) {
+    console.error('[PiGUI] Failed to auto-start pi:', e)
+    // Don't show error to user, they can start manually
+  }
 })
 
 onUnmounted(() => {
@@ -93,6 +106,21 @@ function handleFileSelect(file: any) {
 
 function handleFileOpen(file: any) {
   console.log('Opened file:', file)
+}
+
+// Reconnect handler
+async function handleReconnect() {
+  if (sessionStore.isRunning) return
+  
+  try {
+    const cwd = settingsStore.cwd || 'C:\\Users\\huoying\\code'
+    await piStart(cwd)
+    sessionStore.isRunning = true
+    await piGetState()
+    console.log('[PiGUI] Reconnected to pi')
+  } catch (e) {
+    console.error('[PiGUI] Failed to reconnect:', e)
+  }
 }
 </script>
 
@@ -124,9 +152,9 @@ function handleFileOpen(file: any) {
       </nav>
 
       <div class="sidebar-footer">
-        <div class="status-indicator" :class="{ running: sessionStore.isRunning }">
+        <div class="status-indicator" :class="{ running: sessionStore.isRunning }" @click="handleReconnect">
           <span class="status-dot"></span>
-          <span class="status-text">{{ sessionStore.isRunning ? 'Connected' : 'Offline' }}</span>
+          <span class="status-text">{{ sessionStore.isRunning ? 'Connected' : 'Offline (Click to connect)' }}</span>
         </div>
       </div>
     </aside>
@@ -341,6 +369,14 @@ html, body, #app {
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.status-indicator:hover {
+  background: var(--hover-bg);
 }
 
 .status-dot {

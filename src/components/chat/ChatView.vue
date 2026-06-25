@@ -13,11 +13,11 @@ const settingsStore = useSettingsStore()
 let messageIdCounter = 0
 
 async function onSend(message: string) {
+  // Auto-start pi if not running
   if (!sessionStore.isRunning) {
-    // Auto-start pi if not running
     try {
-      const cwd = settingsStore.cwd || window.location.origin || ''
-      await piStart(cwd || 'C:\\Users\\huoying\\code')
+      const cwd = settingsStore.cwd || 'C:\\Users\\huoying\\code'
+      await piStart(cwd)
       sessionStore.isRunning = true
     } catch (e) {
       console.error('Failed to start pi:', e)
