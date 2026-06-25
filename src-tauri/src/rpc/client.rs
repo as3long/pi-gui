@@ -10,6 +10,7 @@ use super::protocol::*;
 /// Manages the pi --mode rpc subprocess lifecycle and JSONL communication.
 pub struct PiRpcClient {
     process: Option<Child>,
+    stdin: Option<std::process::ChildStdin>,
     running: Arc<AtomicBool>,
 }
 
@@ -17,6 +18,7 @@ impl PiRpcClient {
     pub fn new() -> Self {
         Self {
             process: None,
+            stdin: None,
             running: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -66,10 +68,11 @@ impl PiRpcClient {
                 error_msg
             })?;
 
-        let _stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
+        let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
 
         self.process = Some(child);
+        self.stdin = Some(stdin);
         self.running.store(true, Ordering::SeqCst);
 
         // Start event reader thread
@@ -83,8 +86,7 @@ impl PiRpcClient {
 
     /// Send a JSONL command to the pi subprocess stdin.
     pub fn send_command(&mut self, command: &RpcCommand) -> Result<(), String> {
-        let process = self.process.as_mut().ok_or("pi process not started")?;
-        let stdin = process.stdin.as_mut().ok_or("pi stdin not available")?;
+        let stdin = self.stdin.as_mut().ok_or("pi stdin not available")?;
 
         let json = serde_json::to_string(command)
             .map_err(|e| format!("Failed to serialize command: {}", e))?;
@@ -99,8 +101,7 @@ impl PiRpcClient {
 
     /// Send an Extension UI response back to pi.
     pub fn send_extension_ui_response(&mut self, response: &ExtensionUiResponse) -> Result<(), String> {
-        let process = self.process.as_mut().ok_or("pi process not started")?;
-        let stdin = process.stdin.as_mut().ok_or("pi stdin not available")?;
+        let stdin = self.stdin.as_mut().ok_or("pi stdin not available")?;
 
         let json = serde_json::to_string(response)
             .map_err(|e| format!("Failed to serialize extension UI response: {}", e))?;
@@ -121,6 +122,8 @@ impl PiRpcClient {
     /// Kill the pi subprocess.
     pub fn kill(&mut self) -> Result<(), String> {
         self.running.store(false, Ordering::SeqCst);
+        // Drop stdin first to signal EOF to the process
+        self.stdin = None;
         if let Some(mut process) = self.process.take() {
             let _ = process.kill();
             let _ = process.wait();
