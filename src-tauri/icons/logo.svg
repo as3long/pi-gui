@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- 渐变背景 -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#64ffda;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0d6efd;stop-opacity:1" />
+    </linearGradient>
+    <!-- 内部渐变 -->
+    <linearGradient id="innerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#16213e;stop-opacity:1" />
+    </linearGradient>
+    <!-- 光晕效果 -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="8" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- 圆形背景 -->
+  <circle cx="256" cy="256" r="240" fill="url(#bgGrad)"/>
+  
+  <!-- 内部深色圆形 -->
+  <circle cx="256" cy="256" r="200" fill="url(#innerGrad)"/>
+  
+  <!-- Pi 符号 π - 主体 -->
+  <g transform="translate(256, 240)" filter="url(#glow)">
+    <!-- π 的横杠 -->
+    <rect x="-70" y="-80" width="140" height="16" rx="8" fill="#64ffda"/>
+    
+    <!-- π 的左竖 -->
+    <rect x="-50" y="-64" width="16" height="140" rx="8" fill="#64ffda"/>
+    
+    <!-- π 的右竖 (带弧度) -->
+    <path d="M 40 -64 L 40 20 Q 40 60 20 76 L 20 76" 
+          stroke="#64ffda" 
+          stroke-width="16" 
+          stroke-linecap="round" 
+          fill="none"/>
+  </g>
+  
+  <!-- 代码符号 </> -->
+  <g transform="translate(256, 380)">
+    <text x="0" y="0" 
+          font-family="SF Mono, Monaco, 'Cascadia Code', monospace" 
+          font-size="48" 
+          font-weight="bold"
+          fill="#8892b0" 
+          text-anchor="middle"
+          opacity="0.7">
+      &lt;/&gt;
+    </text>
+  </g>
+  
+  <!-- 装饰点 -->
+  <circle cx="120" cy="120" r="8" fill="#64ffda" opacity="0.5"/>
+  <circle cx="392" cy="120" r="6" fill="#0d6efd" opacity="0.5"/>
+  <circle cx="120" cy="392" r="6" fill="#0d6efd" opacity="0.5"/>
+  <circle cx="392" cy="392" r="8" fill="#64ffda" opacity="0.5"/>
+</svg>
