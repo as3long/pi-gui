@@ -24,6 +24,7 @@
 - 🔧 **Tool Call Visualization** - Expand/collapse tool calls with argument inspection
 - 📝 **Markdown Rendering** - Full markdown support with syntax highlighting
 - 🎨 **Dark/Light Themes** - Automatic theme switching based on system preference
+- 💻 **Code Editor** - Built-in CodeMirror 6 editor with syntax highlighting
 
 ### Extension Support
 - 🔌 **Extension UI Dialogs** - Select, confirm, input, and editor dialogs
