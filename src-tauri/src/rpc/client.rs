@@ -70,6 +70,7 @@ impl PiRpcClient {
 
         let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+        let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
         self.process = Some(child);
         self.stdin = Some(stdin);
@@ -78,7 +79,19 @@ impl PiRpcClient {
         // Start event reader thread
         let running = self.running.clone();
         thread::spawn(move || {
-            read_events(stdout, app_handle, running);
+            read_events(stdout, app_handle.clone(), running.clone());
+        });
+
+        // Start stderr reader thread for debugging
+        thread::spawn(move || {
+            let buf_reader = BufReader::new(stderr);
+            for line in buf_reader.lines() {
+                if let Ok(line) = line {
+                    if !line.trim().is_empty() {
+                        eprintln!("[Pi stderr] {}", line);
+                    }
+                }
+            }
         });
 
         Ok(())
