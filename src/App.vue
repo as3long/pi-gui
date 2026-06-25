@@ -6,6 +6,7 @@ import ChatView from './components/chat/ChatView.vue'
 import SettingsPanel from './components/settings/SettingsPanel.vue'
 import ExtensionDialog from './components/extension/ExtensionDialog.vue'
 import SessionTree from './components/session/SessionTree.vue'
+import { FileTree } from './components/files'
 import { startEventListeners, clearEventHandlers, piNewSession, piCycleModel } from './ipc/bridge'
 
 const settingsStore = useSettingsStore()
@@ -13,6 +14,7 @@ const sessionStore = useSessionStore()
 
 const showSettings = ref(false)
 const showSessions = ref(false)
+const showFiles = ref(false)
 let cleanupEvents: (() => void) | null = null
 
 // Keyboard shortcuts
@@ -26,6 +28,11 @@ function handleKeydown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key === '/') {
     e.preventDefault()
     showSessions.value = !showSessions.value
+  }
+  // Ctrl/Cmd + B: Toggle Files panel
+  if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+    e.preventDefault()
+    showFiles.value = !showFiles.value
   }
   // Ctrl/Cmd + ,: Open Settings
   if ((e.ctrlKey || e.metaKey) && e.key === ',') {
@@ -41,6 +48,7 @@ function handleKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (showSettings.value) showSettings.value = false
     if (showSessions.value) showSessions.value = false
+    if (showFiles.value) showFiles.value = false
   }
 }
 
@@ -77,6 +85,15 @@ function updateTheme() {
 // Watch for dark mode changes
 import { watch } from 'vue'
 watch(() => settingsStore.darkMode, updateTheme)
+
+// File handlers
+function handleFileSelect(file: any) {
+  console.log('Selected file:', file)
+}
+
+function handleFileOpen(file: any) {
+  console.log('Opened file:', file)
+}
 </script>
 
 <template>
@@ -88,13 +105,17 @@ watch(() => settingsStore.darkMode, updateTheme)
       </div>
 
       <nav class="sidebar-nav">
-        <button class="nav-btn" :class="{ active: !showSettings && !showSessions }" @click="showSettings = false; showSessions = false">
+        <button class="nav-btn" :class="{ active: !showSettings && !showSessions && !showFiles }" @click="showSettings = false; showSessions = false; showFiles = false">
           <span class="nav-icon">💬</span>
           <span class="nav-label">Chat</span>
         </button>
         <button class="nav-btn" :class="{ active: showSessions }" @click="showSessions = !showSessions">
           <span class="nav-icon">📋</span>
           <span class="nav-label">Sessions</span>
+        </button>
+        <button class="nav-btn" :class="{ active: showFiles }" @click="showFiles = !showFiles">
+          <span class="nav-icon">📁</span>
+          <span class="nav-label">Files</span>
         </button>
         <button class="nav-btn" :class="{ active: showSettings }" @click="showSettings = !showSettings">
           <span class="nav-icon">⚙️</span>
@@ -113,6 +134,16 @@ watch(() => settingsStore.darkMode, updateTheme)
     <!-- Session Tree Panel -->
     <aside v-if="showSessions" class="session-panel">
       <SessionTree @close="showSessions = false" />
+    </aside>
+
+    <!-- File Tree Panel -->
+    <aside v-if="showFiles" class="file-panel">
+      <FileTree
+        :files="[]"
+        root-name="Project"
+        @select="handleFileSelect"
+        @open="handleFileOpen"
+      />
     </aside>
 
     <!-- Main content -->
@@ -332,6 +363,14 @@ html, body, #app {
 /* ── Session Panel ── */
 .session-panel {
   width: 240px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-color);
+}
+
+/* ── File Panel ── */
+.file-panel {
+  width: 260px;
   flex-shrink: 0;
   border-right: 1px solid var(--border-color);
   background: var(--bg-color);

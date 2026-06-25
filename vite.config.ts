@@ -29,4 +29,37 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  
+  // Build optimizations
+  build: {
+    // Code splitting
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Vue ecosystem
+          'vue-vendor': ['vue', 'pinia'],
+          // CodeMirror (large library)
+          'codemirror': [
+            'codemirror',
+            '@codemirror/lang-javascript',
+            '@codemirror/lang-python',
+            '@codemirror/lang-html',
+            '@codemirror/lang-css',
+            '@codemirror/theme-one-dark',
+            '@codemirror/view',
+            '@codemirror/state',
+            '@codemirror/language',
+            '@codemirror/commands',
+            '@codemirror/autocomplete',
+            '@codemirror/search',
+            '@codemirror/lint'
+          ],
+          // Markdown rendering
+          'markdown': ['markdown-it', 'highlight.js']
+        }
+      }
+    },
+    // Chunk size warning limit
+    chunkSizeWarningLimit: 1000
+  }
 }));
