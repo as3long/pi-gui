@@ -33,8 +33,12 @@ impl PiRpcClient {
         }
 
         let pi_path = find_pi().ok_or_else(|| {
-            "pi not found in PATH. Install with: npm install -g @earendil-works/pi-coding-agent".to_string()
+            let error_msg = "pi not found. Please ensure pi-coding-agent is installed and available in PATH.";
+            eprintln!("[PiGUI] {}", error_msg);
+            error_msg.to_string()
         })?;
+
+        eprintln!("[PiGUI] Found pi at: {}", pi_path);
 
         // Handle PowerShell scripts on Windows
         let mut cmd = Command::new(&pi_path);
@@ -42,9 +46,12 @@ impl PiRpcClient {
 
         // If pi is a .ps1 file, use powershell.exe to run it
         if pi_path.ends_with(".ps1") {
+            eprintln!("[PiGUI] Using PowerShell to run .ps1 script");
             cmd = Command::new("powershell.exe");
             args = vec!["-ExecutionPolicy", "Bypass", "-File", &pi_path, "--mode", "rpc", "--no-session"];
         }
+
+        eprintln!("[PiGUI] Spawning pi with args: {:?}", args);
 
         let mut child = cmd
             .args(&args)
@@ -53,7 +60,11 @@ impl PiRpcClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn pi: {}", e))?;
+            .map_err(|e| {
+                let error_msg = format!("Failed to spawn pi: {}", e);
+                eprintln!("[PiGUI] {}", error_msg);
+                error_msg
+            })?;
 
         let _stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
@@ -177,10 +188,10 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
 
 /// Find the pi binary in PATH or common locations.
 fn find_pi() -> Option<String> {
-    // Check PATH first
+    // Check PATH first - look for actual executables
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
-            // Check for pi.exe on Windows
+            // Check for pi.exe on Windows (highest priority)
             let candidate_exe = dir.join("pi.exe");
             if candidate_exe.exists() {
                 return Some(candidate_exe.to_string_lossy().to_string());
@@ -190,23 +201,31 @@ fn find_pi() -> Option<String> {
             if candidate_cmd.exists() {
                 return Some(candidate_cmd.to_string_lossy().to_string());
             }
-            // Check for pi.ps1 on Windows
-            let candidate_ps1 = dir.join("pi.ps1");
-            if candidate_ps1.exists() {
-                return Some(candidate_ps1.to_string_lossy().to_string());
-            }
-            // Check for pi (Unix)
-            let candidate = dir.join("pi");
-            if candidate.exists() {
-                return Some(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    // Check fnm multishells directory (dynamic names)
+    let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_default();
+    let fnm_multishells = std::path::PathBuf::from(&local_app_data).join("fnm_multishells");
+    if fnm_multishells.exists() {
+        if let Ok(entries) = std::fs::read_dir(&fnm_multishells) {
+            for entry in entries.flatten() {
+                let dir = entry.path();
+                if dir.is_dir() {
+                    // Check for pi files in each subdirectory
+                    for name in &["pi.exe", "pi.cmd", "pi.ps1"] {
+                        let candidate = dir.join(name);
+                        if candidate.exists() {
+                            return Some(candidate.to_string_lossy().to_string());
+                        }
+                    }
+                }
             }
         }
     }
 
-    // Check some common locations
+    // Check common locations
     let common_locations = [
-        // npm global on Windows
-        r"C:\Users\huoying\AppData\Local\fnm_multishells",
         // npm global on Unix
         "/usr/local/bin/pi",
         "/usr/bin/pi",
