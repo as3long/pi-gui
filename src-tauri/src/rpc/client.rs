@@ -36,8 +36,18 @@ impl PiRpcClient {
             "pi not found in PATH. Install with: npm install -g @earendil-works/pi-coding-agent".to_string()
         })?;
 
-        let mut child = Command::new(&pi_path)
-            .args(["--mode", "rpc", "--no-session"])
+        // Handle PowerShell scripts on Windows
+        let mut cmd = Command::new(&pi_path);
+        let mut args = vec!["--mode", "rpc", "--no-session"];
+
+        // If pi is a .ps1 file, use powershell.exe to run it
+        if pi_path.ends_with(".ps1") {
+            cmd = Command::new("powershell.exe");
+            args = vec!["-ExecutionPolicy", "Bypass", "-File", &pi_path, "--mode", "rpc", "--no-session"];
+        }
+
+        let mut child = cmd
+            .args(&args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -170,14 +180,25 @@ fn find_pi() -> Option<String> {
     // Check PATH first
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
-            let candidate = dir.join("pi");
-            if candidate.exists() {
-                return Some(candidate.to_string_lossy().to_string());
-            }
-            // Also check for pi.exe on Windows
+            // Check for pi.exe on Windows
             let candidate_exe = dir.join("pi.exe");
             if candidate_exe.exists() {
                 return Some(candidate_exe.to_string_lossy().to_string());
+            }
+            // Check for pi.cmd on Windows
+            let candidate_cmd = dir.join("pi.cmd");
+            if candidate_cmd.exists() {
+                return Some(candidate_cmd.to_string_lossy().to_string());
+            }
+            // Check for pi.ps1 on Windows
+            let candidate_ps1 = dir.join("pi.ps1");
+            if candidate_ps1.exists() {
+                return Some(candidate_ps1.to_string_lossy().to_string());
+            }
+            // Check for pi (Unix)
+            let candidate = dir.join("pi");
+            if candidate.exists() {
+                return Some(candidate.to_string_lossy().to_string());
             }
         }
     }
