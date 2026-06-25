@@ -57,7 +57,12 @@ async function onRefreshStats() {
         <span v-if="sessionStore.currentModel" class="model-badge">
           {{ sessionStore.currentModel.provider }} / {{ sessionStore.currentModel.name }}
         </span>
-        <span v-else class="model-badge offline">Offline</span>
+        <span v-else-if="sessionStore.isRunning" class="model-badge waiting">
+          ⏳ Select Model
+        </span>
+        <span v-else class="model-badge offline">
+          ⚫ Offline
+        </span>
         <span v-if="chatStore.isStreaming" class="status-badge streaming">Streaming…</span>
         <span v-if="chatStore.isCompacting" class="status-badge compacting">Compacting…</span>
         <span v-if="chatStore.isRetrying" class="status-badge retrying">Retrying…</span>
@@ -145,6 +150,12 @@ async function onRefreshStats() {
 
 .model-badge.offline {
   color: var(--muted-color);
+  background: var(--error-bg);
+}
+
+.model-badge.waiting {
+  color: var(--warning-color);
+  background: var(--warning-bg);
 }
 
 .status-badge {
