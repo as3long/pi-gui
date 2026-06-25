@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { AgentMessage, AssistantMessage, UserMessage, ToolResultMessage } from '../../ipc/types'
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import DiffRenderer from '../common/DiffRenderer.vue'
+import CodeBlock from '../common/CodeBlock.vue'
 
 const props = defineProps<{
   message: AgentMessage
@@ -44,6 +45,27 @@ const toolCalls = computed(() => {
     args: JSON.stringify((c as { arguments: Record<string, unknown> }).arguments, null, 2),
   }))
 })
+
+// Extract code blocks from text
+const codeBlocks = computed(() => {
+  const text = textContent.value
+  const blocks: Array<{ code: string; language: string; filename?: string }> = []
+  const regex = /```(\w+)?\s*(?:filename="([^"]+)")?\s*\n([\s\S]*?)```/g
+  let match
+  while ((match = regex.exec(text)) !== null) {
+    blocks.push({
+      language: match[1] || 'text',
+      filename: match[2],
+      code: match[3].trim()
+    })
+  }
+  return blocks
+})
+
+// Text without code blocks
+const textWithoutCode = computed(() => {
+  return textContent.value.replace(/```[\s\S]*?```/g, '').trim()
+})
 </script>
 
 <template>
@@ -61,8 +83,19 @@ const toolCalls = computed(() => {
       </div>
 
       <!-- Text content -->
-      <div v-if="textContent" class="text-content">
-        <MarkdownRenderer :text="textContent" />
+      <div v-if="textWithoutCode" class="text-content">
+        <MarkdownRenderer :text="textWithoutCode" />
+      </div>
+
+      <!-- Code blocks -->
+      <div v-if="codeBlocks.length > 0" class="code-blocks">
+        <CodeBlock
+          v-for="(block, index) in codeBlocks"
+          :key="index"
+          :code="block.code"
+          :language="block.language"
+          :filename="block.filename"
+        />
       </div>
 
       <!-- Tool calls (assistant only) -->
