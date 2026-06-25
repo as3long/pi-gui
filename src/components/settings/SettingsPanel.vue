@@ -1,9 +1,17 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useSessionStore } from '../../stores/session'
 import ModelSelector from './ModelSelector.vue'
-import { piNewSession, piSwitchSession } from '../../ipc/bridge'
+import { 
+  piNewSession, 
+  piSwitchSession, 
+  piGetAgentSettings, 
+  piSetAgentSettings,
+  piGetAgentAuth,
+  type PiAgentSettings,
+  type PiAgentAuth 
+} from '../../ipc/bridge'
 
 const emit = defineEmits<{
   close: []
@@ -13,10 +21,43 @@ const settingsStore = useSettingsStore()
 const sessionStore = useSessionStore()
 
 // Tab state
-const activeTab = ref<'model' | 'general' | 'about' | 'session'>('model')
+const activeTab = ref<'model' | 'general' | 'about' | 'session' | 'pi-agent'>('model')
 
 // Working directory
 const cwdInput = ref(settingsStore.cwd)
+
+// Pi Agent settings
+const agentSettings = ref<PiAgentSettings>({})
+const agentAuth = ref<PiAgentAuth>({})
+const isLoadingAgent = ref(false)
+
+async function loadAgentConfig() {
+  isLoadingAgent.value = true
+  try {
+    const [settings, auth] = await Promise.all([
+      piGetAgentSettings(),
+      piGetAgentAuth()
+    ])
+    agentSettings.value = settings
+    agentAuth.value = auth
+  } catch (e) {
+    console.error('Failed to load agent config:', e)
+  } finally {
+    isLoadingAgent.value = false
+  }
+}
+
+async function saveAgentSettings() {
+  try {
+    await piSetAgentSettings(agentSettings.value)
+  } catch (e) {
+    console.error('Failed to save agent settings:', e)
+  }
+}
+
+onMounted(() => {
+  loadAgentConfig()
+})
 
 function saveCwd() {
   settingsStore.setCwd(cwdInput.value)
@@ -71,6 +112,13 @@ function switchSession() {
         @click="activeTab = 'session'"
       >
         Session
+      </button>
+      <button
+        class="tab-btn"
+        :class="{ active: activeTab === 'pi-agent' }"
+        @click="activeTab = 'pi-agent'"
+      >
+        Pi Agent
       </button>
     </div>
 
@@ -178,6 +226,63 @@ function switchSession() {
           <div class="stat-item">
             <span class="stat-label">Total Cost</span>
             <span class="stat-value">${{ sessionStore.stats.cost.toFixed(4) }}</span>
+          </div>
+        </div>
+      </div>
+      <!-- Pi Agent Settings -->
+      <div v-if="activeTab === 'pi-agent'" class="pi-agent-settings">
+        <div class="section-header">
+          <h3 class="section-title">Pi Agent Configuration</h3>
+          <button class="btn btn-sm" @click="loadAgentConfig" :disabled="isLoadingAgent">
+            {{ isLoadingAgent ? 'Loading...' : '🔄 Refresh' }}
+          </button>
+        </div>
+        
+        <!-- Settings -->
+        <div class="config-section">
+          <h4 class="subsection-title">Settings (~/.pi/agent/settings.json)</h4>
+          <div class="config-grid">
+            <div class="config-item">
+              <label class="config-label">Default Provider</label>
+              <input v-model="agentSettings.defaultProvider" class="form-input" />
+            </div>
+            <div class="config-item">
+              <label class="config-label">Default Model</label>
+              <input v-model="agentSettings.defaultModel" class="form-input" />
+            </div>
+            <div class="config-item">
+              <label class="config-label">Thinking Level</label>
+              <select v-model="agentSettings.defaultThinkingLevel" class="form-input">
+                <option value="off">Off</option>
+                <option value="minimal">Minimal</option>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+                <option value="xhigh">XHigh</option>
+              </select>
+            </div>
+            <div class="config-item">
+              <label class="config-label">Shell Path</label>
+              <input v-model="agentSettings.shellPath" class="form-input mono" />
+            </div>
+          </div>
+          <button class="btn btn-primary" @click="saveAgentSettings">Save Settings</button>
+        </div>
+        
+        <!-- Auth -->
+        <div class="config-section">
+          <h4 class="subsection-title">API Keys (~/.pi/agent/auth.json)</h4>
+          <div class="auth-list">
+            <div v-for="(auth, provider) in agentAuth" :key="provider" class="auth-item">
+              <div class="auth-provider">{{ provider }}</div>
+              <div class="auth-key">
+                <span class="key-masked">••••••••{{ auth.key.slice(-4) }}</span>
+                <span class="auth-type">{{ auth.type }}</span>
+              </div>
+            </div>
+            <div v-if="Object.keys(agentAuth).length === 0" class="empty-state">
+              No API keys configured
+            </div>
           </div>
         </div>
       </div>
@@ -393,5 +498,103 @@ function switchSession() {
 
 .session-settings {
   padding: 16px;
+}
+
+/* Pi Agent Settings */
+.pi-agent-settings {
+  padding: 16px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.section-header .section-title {
+  margin: 0;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.8em;
+}
+
+.config-section {
+  margin-bottom: 24px;
+}
+
+.subsection-title {
+  font-size: 0.85em;
+  font-weight: 500;
+  color: var(--muted-color);
+  margin: 0 0 12px;
+}
+
+.config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.config-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.config-label {
+  font-size: 0.8em;
+  color: var(--muted-color);
+}
+
+.auth-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.auth-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--badge-bg);
+  border-radius: 6px;
+}
+
+.auth-provider {
+  font-weight: 500;
+  color: var(--text-color);
+  text-transform: capitalize;
+}
+
+.auth-key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.key-masked {
+  font-family: 'SF Mono', monospace;
+  font-size: 0.85em;
+  color: var(--muted-color);
+}
+
+.auth-type {
+  font-size: 0.75em;
+  padding: 2px 6px;
+  background: var(--hover-bg);
+  border-radius: 4px;
+  color: var(--muted-color);
+}
+
+.empty-state {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted-color);
+  font-size: 0.85em;
 }
 </style>

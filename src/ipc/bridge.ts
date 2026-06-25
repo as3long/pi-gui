@@ -93,6 +93,38 @@ export async function piExtensionUiResponse(
   await invoke('pi_extension_ui_response', { id, value, confirmed, cancelled })
 }
 
+// ── Pi Agent Config ──
+
+export interface PiAgentSettings {
+  lastChangelogVersion?: string
+  defaultProvider?: string
+  defaultModel?: string
+  defaultThinkingLevel?: string
+  shellPath?: string
+  terminal?: {
+    showTerminalProgress?: boolean
+  }
+}
+
+export interface PiAgentAuth {
+  [provider: string]: {
+    type: string
+    key: string
+  }
+}
+
+export async function piGetAgentSettings(): Promise<PiAgentSettings> {
+  return await invoke<PiAgentSettings>('pi_get_agent_settings')
+}
+
+export async function piSetAgentSettings(settings: PiAgentSettings): Promise<void> {
+  await invoke('pi_set_agent_settings', { settings })
+}
+
+export async function piGetAgentAuth(): Promise<PiAgentAuth> {
+  return await invoke<PiAgentAuth>('pi_get_agent_auth')
+}
+
 // ── Event Listeners ──
 
 let unlistenRaw: UnlistenFn | null = null
