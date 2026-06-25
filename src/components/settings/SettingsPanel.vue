@@ -21,7 +21,7 @@ const settingsStore = useSettingsStore()
 const sessionStore = useSessionStore()
 
 // Tab state
-const activeTab = ref<'model' | 'general' | 'about' | 'session' | 'pi-agent'>('model')
+const activeTab = ref<'model' | 'general' | 'session' | 'config'>('model')
 
 // Working directory
 const cwdInput = ref(settingsStore.cwd)
@@ -30,6 +30,21 @@ const cwdInput = ref(settingsStore.cwd)
 const agentSettings = ref<PiAgentSettings>({})
 const agentAuth = ref<PiAgentAuth>({})
 const isLoadingAgent = ref(false)
+
+function saveCwd() {
+  settingsStore.setCwd(cwdInput.value)
+}
+
+// Session controls
+const sessionPath = ref('')
+
+function newSession() {
+  piNewSession()
+}
+
+function switchSession() {
+  piSwitchSession(sessionPath.value)
+}
 
 async function loadAgentConfig() {
   isLoadingAgent.value = true
@@ -58,21 +73,6 @@ async function saveAgentSettings() {
 onMounted(() => {
   loadAgentConfig()
 })
-
-function saveCwd() {
-  settingsStore.setCwd(cwdInput.value)
-}
-
-// Session controls
-const sessionPath = ref('')
-
-function newSession() {
-  piNewSession()
-}
-
-function switchSession() {
-  piSwitchSession(sessionPath.value)
-}
 </script>
 
 <template>
@@ -90,47 +90,59 @@ function switchSession() {
         :class="{ active: activeTab === 'model' }"
         @click="activeTab = 'model'"
       >
-        Model
+        🤖 Model
       </button>
       <button
         class="tab-btn"
         :class="{ active: activeTab === 'general' }"
         @click="activeTab = 'general'"
       >
-        General
-      </button>
-      <button
-        class="tab-btn"
-        :class="{ active: activeTab === 'about' }"
-        @click="activeTab = 'about'"
-      >
-        About
+        ⚙️ General
       </button>
       <button
         class="tab-btn"
         :class="{ active: activeTab === 'session' }"
         @click="activeTab = 'session'"
       >
-        Session
+        📋 Session
       </button>
       <button
         class="tab-btn"
-        :class="{ active: activeTab === 'pi-agent' }"
-        @click="activeTab = 'pi-agent'"
+        :class="{ active: activeTab === 'config' }"
+        @click="activeTab = 'config'"
       >
-        Pi Agent
+        📄 Config
       </button>
     </div>
 
     <!-- Tab content -->
     <div class="tab-content">
       <!-- Model Settings -->
-      <div v-if="activeTab === 'model'">
+      <div v-if="activeTab === 'model'" class="tab-panel">
         <ModelSelector />
+        
+        <!-- Current Config Info -->
+        <div class="config-info">
+          <h4 class="subsection-title">Current Configuration</h4>
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">Default Provider</span>
+              <span class="info-value">{{ agentSettings.defaultProvider || 'Not set' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Default Model</span>
+              <span class="info-value">{{ agentSettings.defaultModel || 'Not set' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Thinking Level</span>
+              <span class="info-value">{{ agentSettings.defaultThinkingLevel || 'Not set' }}</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- General Settings -->
-      <div v-if="activeTab === 'general'" class="general-settings">
+      <div v-if="activeTab === 'general'" class="tab-panel">
         <h3 class="section-title">Working Directory</h3>
         <div class="form-group">
           <input
@@ -139,6 +151,16 @@ function switchSession() {
             placeholder="e.g., C:\Users\huoying\code\my-project"
           />
           <button class="btn btn-primary save-btn" @click="saveCwd">Save</button>
+        </div>
+
+        <h3 class="section-title">Shell Configuration</h3>
+        <div class="form-group">
+          <label class="form-label">Shell Path</label>
+          <input
+            v-model="agentSettings.shellPath"
+            class="form-input mono"
+            placeholder="e.g., /bin/bash or C:\Program Files\Git\bin\bash.exe"
+          />
         </div>
 
         <h3 class="section-title">Toggles</h3>
@@ -167,70 +189,57 @@ function switchSession() {
             />
             <span>Dark mode</span>
           </label>
+          <label class="toggle-item">
+            <input
+              type="checkbox"
+              :checked="agentSettings.terminal?.showTerminalProgress"
+              @change="agentSettings.terminal = { ...agentSettings.terminal, showTerminalProgress: ($event.target as HTMLInputElement).checked }"
+            />
+            <span>Show terminal progress</span>
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-primary" @click="saveAgentSettings">Save Shell Settings</button>
         </div>
       </div>
 
-      <!-- About -->
-      <div v-if="activeTab === 'about'" class="about-section">
-        <h3 class="section-title">Pi GUI v0.1.0</h3>
-        <p class="about-text">
-          A desktop GUI for <a href="https://pi.dev" target="_blank">pi-coding-agent</a>.
-          Built with Tauri + Vue 3 + TypeScript.
-        </p>
-        <p class="about-text">
-          Powered by pi <code>--mode rpc</code> protocol.
-        </p>
-
-        <div v-if="sessionStore.stats" class="stats-grid">
-          <div class="stat-item">
-            <span class="stat-label">Messages</span>
-            <span class="stat-value">{{ sessionStore.stats.totalMessages }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Input Tokens</span>
-            <span class="stat-value">{{ sessionStore.stats.tokens.input.toLocaleString() }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Output Tokens</span>
-            <span class="stat-value">{{ sessionStore.stats.tokens.output.toLocaleString() }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Total Cost</span>
-            <span class="stat-value">${{ sessionStore.stats.cost.toFixed(4) }}</span>
-          </div>
-        </div>
-      </div>
       <!-- Session Settings -->
-      <div v-if="activeTab === 'session'" class="session-settings">
+      <div v-if="activeTab === 'session'" class="tab-panel">
         <h3 class="section-title">Session Management</h3>
         <div class="form-group">
-          <button class="btn btn-primary" @click="newSession">New Session</button>
+          <button class="btn btn-primary" @click="newSession">✨ New Session</button>
         </div>
         <div class="form-group">
           <input v-model="sessionPath" class="form-input mono" placeholder="Session file path to switch" />
-          <button class="btn btn-primary" @click="switchSession">Switch Session</button>
+          <button class="btn btn-primary" @click="switchSession">🔄 Switch Session</button>
         </div>
-        <div v-if="sessionStore.stats" class="stats-grid">
-          <div class="stat-item">
-            <span class="stat-label">Messages</span>
-            <span class="stat-value">{{ sessionStore.stats.totalMessages }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Input Tokens</span>
-            <span class="stat-value">{{ sessionStore.stats.tokens.input.toLocaleString() }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Output Tokens</span>
-            <span class="stat-value">{{ sessionStore.stats.tokens.output.toLocaleString() }}</span>
-          </div>
-          <div class="stat-item">
-            <span class="stat-label">Total Cost</span>
-            <span class="stat-value">${{ sessionStore.stats.cost.toFixed(4) }}</span>
+        
+        <div v-if="sessionStore.stats" class="stats-section">
+          <h3 class="section-title">Session Statistics</h3>
+          <div class="stats-grid">
+            <div class="stat-item">
+              <span class="stat-label">Messages</span>
+              <span class="stat-value">{{ sessionStore.stats.totalMessages }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Input Tokens</span>
+              <span class="stat-value">{{ sessionStore.stats.tokens.input.toLocaleString() }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Output Tokens</span>
+              <span class="stat-value">{{ sessionStore.stats.tokens.output.toLocaleString() }}</span>
+            </div>
+            <div class="stat-item">
+              <span class="stat-label">Total Cost</span>
+              <span class="stat-value">${{ sessionStore.stats.cost.toFixed(4) }}</span>
+            </div>
           </div>
         </div>
       </div>
-      <!-- Pi Agent Settings -->
-      <div v-if="activeTab === 'pi-agent'" class="pi-agent-settings">
+
+      <!-- Config (Raw Files) -->
+      <div v-if="activeTab === 'config'" class="tab-panel">
         <div class="section-header">
           <h3 class="section-title">Pi Agent Configuration</h3>
           <button class="btn btn-sm" @click="loadAgentConfig" :disabled="isLoadingAgent">
@@ -238,40 +247,15 @@ function switchSession() {
           </button>
         </div>
         
-        <!-- Settings -->
+        <!-- Settings JSON -->
         <div class="config-section">
-          <h4 class="subsection-title">Settings (~/.pi/agent/settings.json)</h4>
-          <div class="config-grid">
-            <div class="config-item">
-              <label class="config-label">Default Provider</label>
-              <input v-model="agentSettings.defaultProvider" class="form-input" />
-            </div>
-            <div class="config-item">
-              <label class="config-label">Default Model</label>
-              <input v-model="agentSettings.defaultModel" class="form-input" />
-            </div>
-            <div class="config-item">
-              <label class="config-label">Thinking Level</label>
-              <select v-model="agentSettings.defaultThinkingLevel" class="form-input">
-                <option value="off">Off</option>
-                <option value="minimal">Minimal</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="xhigh">XHigh</option>
-              </select>
-            </div>
-            <div class="config-item">
-              <label class="config-label">Shell Path</label>
-              <input v-model="agentSettings.shellPath" class="form-input mono" />
-            </div>
-          </div>
-          <button class="btn btn-primary" @click="saveAgentSettings">Save Settings</button>
+          <h4 class="subsection-title">settings.json</h4>
+          <pre class="config-json">{{ JSON.stringify(agentSettings, null, 2) }}</pre>
         </div>
         
-        <!-- Auth -->
+        <!-- Auth JSON -->
         <div class="config-section">
-          <h4 class="subsection-title">API Keys (~/.pi/agent/auth.json)</h4>
+          <h4 class="subsection-title">auth.json</h4>
           <div class="auth-list">
             <div v-for="(auth, provider) in agentAuth" :key="provider" class="auth-item">
               <div class="auth-provider">{{ provider }}</div>
@@ -284,6 +268,20 @@ function switchSession() {
               No API keys configured
             </div>
           </div>
+        </div>
+
+        <!-- About -->
+        <div class="about-section">
+          <h4 class="subsection-title">About</h4>
+          <p class="about-text">
+            Pi GUI v0.1.0 - A desktop GUI for 
+            <a href="https://github.com/earendil-works/pi-coding-agent" target="_blank">
+              pi-coding-agent
+            </a>
+          </p>
+          <p class="about-text">
+            Built with Tauri + Vue 3 + TypeScript
+          </p>
         </div>
       </div>
     </div>
@@ -304,6 +302,7 @@ function switchSession() {
   align-items: center;
   padding: 16px 20px;
   border-bottom: 1px solid var(--border-color);
+  background: var(--header-bg);
 }
 
 .settings-title {
@@ -331,10 +330,11 @@ function switchSession() {
   display: flex;
   border-bottom: 1px solid var(--border-color);
   padding: 0 16px;
+  background: var(--header-bg);
 }
 
 .tab-btn {
-  padding: 10px 16px;
+  padding: 12px 16px;
   border: none;
   background: none;
   color: var(--muted-color);
@@ -359,8 +359,8 @@ function switchSession() {
   overflow-y: auto;
 }
 
-.general-settings {
-  padding: 16px;
+.tab-panel {
+  padding: 20px;
 }
 
 .section-title {
@@ -372,10 +372,23 @@ function switchSession() {
   letter-spacing: 0.05em;
 }
 
+.subsection-title {
+  font-size: 0.85em;
+  font-weight: 500;
+  color: var(--muted-color);
+  margin: 0 0 8px;
+}
+
 .form-group {
   display: flex;
   gap: 8px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
+}
+
+.form-label {
+  font-size: 0.85em;
+  color: var(--muted-color);
+  margin-bottom: 4px;
 }
 
 .form-input {
@@ -398,12 +411,22 @@ function switchSession() {
   outline: none;
 }
 
+.form-actions {
+  margin-top: 16px;
+}
+
 .btn {
   padding: 8px 16px;
   border: 1px solid var(--border-color);
   border-radius: 6px;
   cursor: pointer;
   font-size: 0.85em;
+  transition: all 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .btn-primary {
@@ -412,8 +435,13 @@ function switchSession() {
   border-color: var(--accent-color);
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   opacity: 0.9;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.8em;
 }
 
 .save-btn {
@@ -444,39 +472,53 @@ function switchSession() {
   accent-color: var(--accent-color);
 }
 
-.about-section {
+/* Config Info */
+.config-info {
+  margin-top: 24px;
   padding: 16px;
+  background: var(--badge-bg);
+  border-radius: 8px;
 }
 
-.about-text {
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.info-label {
+  font-size: 0.75em;
   color: var(--muted-color);
-  font-size: 0.9em;
-  line-height: 1.6;
-  margin-bottom: 12px;
+  text-transform: uppercase;
 }
 
-.about-text a {
-  color: var(--accent-color);
+.info-value {
+  font-size: 0.9em;
+  color: var(--text-color);
+  font-family: 'SF Mono', monospace;
 }
 
-.about-text code {
-  background: var(--code-bg);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 0.9em;
+/* Stats */
+.stats-section {
+  margin-top: 24px;
 }
 
 .stats-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
-  margin-top: 16px;
 }
 
 .stat-item {
   display: flex;
   flex-direction: column;
-  padding: 10px;
+  padding: 12px;
   background: var(--badge-bg);
   border-radius: 6px;
 }
@@ -496,15 +538,7 @@ function switchSession() {
   margin-top: 4px;
 }
 
-.session-settings {
-  padding: 16px;
-}
-
-/* Pi Agent Settings */
-.pi-agent-settings {
-  padding: 16px;
-}
-
+/* Config Section */
 .section-header {
   display: flex;
   justify-content: space-between;
@@ -516,38 +550,18 @@ function switchSession() {
   margin: 0;
 }
 
-.btn-sm {
-  padding: 4px 10px;
-  font-size: 0.8em;
-}
-
 .config-section {
   margin-bottom: 24px;
 }
 
-.subsection-title {
+.config-json {
+  padding: 12px;
+  background: var(--code-bg);
+  border-radius: 6px;
+  font-family: 'SF Mono', monospace;
   font-size: 0.85em;
-  font-weight: 500;
-  color: var(--muted-color);
-  margin: 0 0 12px;
-}
-
-.config-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.config-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.config-label {
-  font-size: 0.8em;
-  color: var(--muted-color);
+  overflow-x: auto;
+  color: var(--text-color);
 }
 
 .auth-list {
@@ -596,5 +610,23 @@ function switchSession() {
   text-align: center;
   color: var(--muted-color);
   font-size: 0.85em;
+}
+
+/* About */
+.about-section {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-color);
+}
+
+.about-text {
+  color: var(--muted-color);
+  font-size: 0.85em;
+  line-height: 1.6;
+  margin-bottom: 8px;
+}
+
+.about-text a {
+  color: var(--accent-color);
 }
 </style>
