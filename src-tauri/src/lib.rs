@@ -2,18 +2,19 @@ mod rpc;
 mod state;
 mod commands;
 
-use rpc::client::PiRpcClient;
-use std::sync::Mutex;
+use state::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize tokio runtime for async operations
+    // Tauri already provides a tokio runtime, but we ensure it's properly configured
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .manage(state::AppState {
-            rpc: Mutex::new(PiRpcClient::new()),
-        })
+        // Use async Mutex for non-blocking state management
+        .manage(AppState::new())
+        // Async command handlers - all commands are async to prevent UI blocking
         .invoke_handler(tauri::generate_handler![
             commands::pi_start,
             commands::pi_stop,

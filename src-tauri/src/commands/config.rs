@@ -1,76 +1,159 @@
-/// Read pi agent settings from ~/.pi/agent/settings.json
-#[tauri::command]
-pub fn pi_get_agent_settings() -> Result<serde_json::Value, String> {
-    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
-    let settings_path = home_dir.join(".pi/agent/settings.json");
+use dirs::home_dir;
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 
-    if !settings_path.exists() {
+/// Find the pi binary in PATH or common locations.
+/// 
+/// This is a helper function used by multiple commands.
+pub fn find_pi_binary() -> Result<String, String> {
+    // Check PATH first - look for actual executables
+    if let Ok(path) = env::var("PATH") {
+        for dir in env::split_paths(&path) {
+            // Check for pi.exe on Windows (highest priority)
+            let candidate_exe = dir.join("pi.exe");
+            if candidate_exe.exists() {
+                return Ok(candidate_exe.to_string_lossy().to_string());
+            }
+            // Check for pi.cmd on Windows
+            let candidate_cmd = dir.join("pi.cmd");
+            if candidate_cmd.exists() {
+                return Ok(candidate_cmd.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    // Check fnm multishells directory (dynamic names)
+    let local_app_data = env::var("LOCALAPPDATA").unwrap_or_default();
+    let fnm_multishells = PathBuf::from(&local_app_data).join("fnm_multishells");
+    if fnm_multishells.exists() {
+        if let Ok(entries) = fs::read_dir(&fnm_multishells) {
+            for entry in entries.flatten() {
+                let dir = entry.path();
+                if dir.is_dir() {
+                    // Check for pi files in each subdirectory
+                    for name in &["pi.exe", "pi.cmd", "pi.ps1"] {
+                        let candidate = dir.join(name);
+                        if candidate.exists() {
+                            return Ok(candidate.to_string_lossy().to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Check common locations (prefer .cmd on Windows)
+    let home = env::var("USERPROFILE").unwrap_or_default();
+    let common_locations = [
+        // npm global on Unix
+        "/usr/local/bin/pi",
+        "/usr/bin/pi",
+        // fnm/node locations - check .cmd first on Windows
+        &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi.cmd", home),
+        &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi", home),
+    ];
+
+    for loc in &common_locations {
+        let path = PathBuf::from(loc);
+        if path.exists() {
+            return Ok(loc.to_string());
+        }
+    }
+
+    Err("pi not found. Please ensure pi-coding-agent is installed and available in PATH.".into())
+}
+
+/// Get agent settings (async, file I/O is blocking but fast).
+#[tauri::command]
+pub async fn pi_get_agent_settings() -> Result<serde_json::Value, String> {
+    let config_path = get_config_path()?;
+    
+    if !config_path.exists() {
         return Ok(serde_json::json!({}));
     }
-
-    let content = std::fs::read_to_string(&settings_path)
-        .map_err(|e| format!("Failed to read settings: {}", e))?;
-
-    serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))
+    
+    let content = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read config: {}", e))?;
+    
+    let settings: serde_json::Value = serde_json::from_str(&content)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    
+    Ok(settings)
 }
 
-/// Write pi agent settings to ~/.pi/agent/settings.json
+/// Set agent settings (async).
 #[tauri::command]
-pub fn pi_set_agent_settings(settings: serde_json::Value) -> Result<(), String> {
-    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
-    let settings_path = home_dir.join(".pi/agent/settings.json");
-
+pub async fn pi_set_agent_settings(settings: serde_json::Value) -> Result<(), String> {
+    let config_path = get_config_path()?;
+    
     // Ensure parent directory exists
-    if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+    if let Some(parent) = config_path.parent() {
+        let _ = fs::create_dir_all(parent);
     }
-
+    
     let content = serde_json::to_string_pretty(&settings)
-        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-
-    std::fs::write(&settings_path, content)
-        .map_err(|e| format!("Failed to write settings: {}", e))
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+    
+    fs::write(&config_path, content)
+        .map_err(|e| format!("Failed to write config: {}", e))?;
+    
+    Ok(())
 }
 
-/// Read pi agent auth from ~/.pi/agent/auth.json
+/// Get agent auth configuration (async).
 #[tauri::command]
-pub fn pi_get_agent_auth() -> Result<serde_json::Value, String> {
-    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
-    let auth_path = home_dir.join(".pi/agent/auth.json");
-
+pub async fn pi_get_agent_auth() -> Result<serde_json::Value, String> {
+    let auth_path = get_auth_path()?;
+    
     if !auth_path.exists() {
         return Ok(serde_json::json!({}));
     }
-
-    let content = std::fs::read_to_string(&auth_path)
+    
+    let content = fs::read_to_string(&auth_path)
         .map_err(|e| format!("Failed to read auth: {}", e))?;
-
-    serde_json::from_str(&content).map_err(|e| format!("Failed to parse auth: {}", e))
+    
+    let auth: serde_json::Value = serde_json::from_str(&content)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    
+    Ok(auth)
 }
 
-/// Write pi agent auth to ~/.pi/agent/auth.json
+/// Set agent auth configuration (async).
 #[tauri::command]
-pub fn pi_set_agent_auth(auth: serde_json::Value) -> Result<(), String> {
-    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
-    let auth_path = home_dir.join(".pi/agent/auth.json");
-
+pub async fn pi_set_agent_auth(auth: serde_json::Value) -> Result<(), String> {
+    let auth_path = get_auth_path()?;
+    
     // Ensure parent directory exists
     if let Some(parent) = auth_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        let _ = fs::create_dir_all(parent);
     }
-
+    
     let content = serde_json::to_string_pretty(&auth)
         .map_err(|e| format!("Failed to serialize auth: {}", e))?;
-
-    std::fs::write(&auth_path, content)
-        .map_err(|e| format!("Failed to write auth: {}", e))
+    
+    fs::write(&auth_path, content)
+        .map_err(|e| format!("Failed to write auth: {}", e))?;
+    
+    Ok(())
 }
 
-/// Get home directory path
+/// Get home directory path.
 #[tauri::command]
 pub fn pi_get_home_dir() -> Result<String, String> {
-    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
-    Ok(home_dir.to_string_lossy().to_string())
+    home_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .ok_or_else(|| "Failed to get home directory".into())
+}
+
+/// Get config file path for pi agent settings.
+fn get_config_path() -> Result<PathBuf, String> {
+    let home = home_dir().ok_or_else(|| "Failed to get home directory".to_string())?;
+    Ok(home.join(".pi").join("config.json"))
+}
+
+/// Get auth file path for pi agent credentials.
+fn get_auth_path() -> Result<PathBuf, String> {
+    let home = home_dir().ok_or_else(|| "Failed to get home directory".to_string())?;
+    Ok(home.join(".pi").join("auth.json"))
 }

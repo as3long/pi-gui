@@ -1,75 +1,123 @@
-use crate::rpc::client::find_pi as find_pi_binary;
+use std::process::Stdio;
 
-/// Install a pi package (e.g., npm:pi-volcengine-provider)
+/// Install a pi package (async).
+/// 
+/// Spawns the installation as a non-blocking process and
+/// streams output to avoid blocking the UI thread.
 #[tauri::command]
-pub fn pi_install_package(source: String) -> Result<serde_json::Value, String> {
-    let pi_path = find_pi_binary().ok_or("pi binary not found")?;
-
-    eprintln!(
-        "[PiGUI] Installing package: {} using pi at: {}",
-        source, pi_path
-    );
-
-    let mut cmd = std::process::Command::new(&pi_path);
-    cmd.arg("install").arg(&source);
-
-    // Windows-specific: hide console window
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+pub async fn pi_install_package(source: String) -> Result<serde_json::Value, String> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+    
+    let pi_path = super::config::find_pi_binary()?;
+    
+    eprintln!("[PiGUI] Installing package from: {}", source);
+    
+    let mut cmd = if pi_path.ends_with(".ps1") {
+        let mut c = Command::new("powershell.exe");
+        c.args(&["-ExecutionPolicy", "Bypass", "-File", &pi_path, "install", &source]);
+        c
+    } else {
+        let mut c = Command::new(&pi_path);
+        c.args(&["install", &source]);
+        c
+    };
+    
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn install process: {}", e))?;
+    
+    let stdout = child.stdout.take()
+        .ok_or_else(|| "Failed to capture stdout".to_string())?;
+    let stderr = child.stderr.take()
+        .ok_or_else(|| "Failed to capture stderr".to_string())?;
+    
+    // Read output asynchronously
+    let mut stdout_reader = BufReader::new(stdout).lines();
+    let mut stderr_reader = BufReader::new(stderr).lines();
+    
+    let mut output = Vec::new();
+    
+    loop {
+        tokio::select! {
+            line = stdout_reader.next_line() => {
+                match line {
+                    Ok(Some(line)) => {
+                        eprintln!("[Pi install] {}", line);
+                        output.push(line);
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        eprintln!("[Pi install] stdout error: {}", e);
+                        break;
+                    }
+                }
+            }
+            line = stderr_reader.next_line() => {
+                match line {
+                    Ok(Some(line)) => {
+                        eprintln!("[Pi install err] {}", line);
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        eprintln!("[Pi install] stderr error: {}", e);
+                    }
+                }
+            }
+        }
     }
-
-    let output = cmd
-        .output()
-        .map_err(|e| format!("Failed to run pi install: {}", e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    eprintln!("[PiGUI] pi install stdout: {}", stdout);
-    eprintln!("[PiGUI] pi install stderr: {}", stderr);
-
-    if !output.status.success() {
-        return Err(format!("Install failed: {}", stderr));
+    
+    // Wait for process to finish
+    let status = child.wait()
+        .await
+        .map_err(|e| format!("Install process failed: {}", e))?;
+    
+    if !status.success() {
+        return Err(format!("Install failed with status: {}", status));
     }
-
+    
     Ok(serde_json::json!({
         "success": true,
         "source": source,
-        "stdout": stdout.to_string(),
-        "stderr": stderr.to_string()
+        "output": output,
     }))
 }
 
-/// List installed packages from settings
+/// List installed pi packages (async).
 #[tauri::command]
-pub fn pi_list_packages() -> Result<Vec<String>, String> {
-    // Read settings.json and extract packages list
-    let home_dir = dirs::home_dir().ok_or("Failed to get home directory")?;
-    let settings_path = home_dir.join(".pi/agent/settings.json");
-
-    if !settings_path.exists() {
-        return Ok(Vec::new());
+pub async fn pi_list_packages() -> Result<Vec<String>, String> {
+    use tokio::process::Command;
+    
+    let pi_path = super::config::find_pi_binary()?;
+    
+    let mut cmd = if pi_path.ends_with(".ps1") {
+        let mut c = Command::new("powershell.exe");
+        c.args(&["-ExecutionPolicy", "Bypass", "-File", &pi_path, "list-packages"]);
+        c
+    } else {
+        let mut c = Command::new(&pi_path);
+        c.args(&["list-packages"]);
+        c
+    };
+    
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| format!("Failed to list packages: {}", e))?;
+    
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("list-packages failed: {}", stderr));
     }
-
-    let content = std::fs::read_to_string(&settings_path)
-        .map_err(|e| format!("Failed to read settings: {}", e))?;
-
-    let settings: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse settings: {}", e))?;
-
-    let packages = settings
-        .get("packages")
-        .and_then(|p| p.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect()
-        })
-        .unwrap_or_default();
-
+    
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let packages: Vec<String> = stdout
+        .lines()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    
     Ok(packages)
 }

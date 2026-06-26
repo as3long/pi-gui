@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter};
 use super::protocol::*;
 
 /// Manages the pi --mode rpc subprocess lifecycle and JSONL communication.
+#[derive(Default)]
 pub struct PiRpcClient {
     process: Option<Child>,
     stdin: Option<std::process::ChildStdin>,
