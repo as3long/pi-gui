@@ -5,9 +5,7 @@ import type {
   AssistantMessage,
   StreamingMessage,
   RpcEvent,
-  TextContent,
-  ThinkingContent,
-  ToolCallContent,
+  MessageContent,
 } from '../ipc/types'
 
 /**
@@ -44,26 +42,22 @@ export const useChatStore = defineStore('chat', () => {
     try {
       const saved = localStorage.getItem('pi-gui:messages')
       if (saved) {
-        const messages = JSON.parse(saved)
-        console.log('[ChatStore] Loaded messages from localStorage:', messages.length)
-        return messages
+        return JSON.parse(saved)
       }
     } catch (e) {
       console.error('[ChatStore] Failed to load messages:', e)
     }
-    console.log('[ChatStore] No saved messages found')
     return []
   }
 
   // Save messages to localStorage
   function saveMessages(msgs: AgentMessage[]) {
     try {
-      // Don't save streaming messages or empty arrays
-      if (msgs.length === 0 || isStreaming.value) {
+      // Don't save empty arrays
+      if (msgs.length === 0) {
         return
       }
       localStorage.setItem('pi-gui:messages', JSON.stringify(msgs))
-      console.log('[ChatStore] Saved messages to localStorage:', msgs.length)
     } catch (e) {
       console.error('[ChatStore] Failed to save messages:', e)
     }
@@ -79,21 +73,14 @@ export const useChatStore = defineStore('chat', () => {
   // ── Actions ──
 
   function addMessage(msg: AgentMessage) {
-    console.log('[ChatStore] Adding message:', msg.role)
     messages.value.push(msg)
-    console.log('[ChatStore] Total messages:', messages.value.length)
   }
 
   function updateStreaming(event: RpcEvent) {
     if (event.type !== 'message_update') return
-    // Support both camelCase and snake_case field names
     const msgEvent = (event as any).assistant_message_event || (event as any).assistantMessageEvent
-    if (!msgEvent) {
-      console.log('[ChatStore] No assistant message event found')
-      return
-    }
+    if (!msgEvent) return
     
-    console.log('[ChatStore] Updating streaming with event:', msgEvent.type)
     streamingMessage.value.isComplete = false
 
     switch (msgEvent.type) {
@@ -104,12 +91,15 @@ export const useChatStore = defineStore('chat', () => {
         streamingMessage.value.thinking += msgEvent.delta || ''
         break
       case 'toolcall_start': {
-        const toolCall = msgEvent.tool_call as { id?: string; name?: string; arguments?: string } | undefined
-        if (toolCall?.id) {
+        const toolCall = msgEvent.tool_call as any
+        const tcId = toolCall?.id || toolCall?.toolCallId || toolCall?.tool_call_id
+        const tcName = toolCall?.name || toolCall?.toolName || toolCall?.tool_name || ''
+        const tcArgs = toolCall?.arguments || toolCall?.args || toolCall?.input || '{}'
+        if (tcId) {
           streamingMessage.value.toolCalls.push({
-            id: toolCall.id,
-            name: toolCall.name || '',
-            args: toolCall.arguments || '',
+            id: tcId,
+            name: tcName,
+            args: typeof tcArgs === 'string' ? tcArgs : JSON.stringify(tcArgs),
             isComplete: false,
             isError: false,
           })
@@ -169,44 +159,75 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function finalizeStreaming() {
-    console.log('[ChatStore] Finalizing streaming...')
-    console.log('[ChatStore] Streaming text:', streamingMessage.value.text)
-    console.log('[ChatStore] Streaming thinking:', streamingMessage.value.thinking)
-    
-    // Build final assistant message from streaming state
-    const content: (TextContent | ThinkingContent | ToolCallContent)[] = []
+    // Build messages in chronological order:
+    // 1. Assistant text/thinking (if any)
+    // 2. For each tool call: assistant toolCall → toolResult
+    const toolCalls = streamingMessage.value.toolCalls
+    const addedTcIds = new Set<string>()
 
+    // First, add the text/thinking part as one assistant message (if there's content)
+    const headerContent: MessageContent[] = []
     if (streamingMessage.value.thinking) {
-      content.push({ type: 'thinking', thinking: streamingMessage.value.thinking })
+      headerContent.push({ type: 'thinking', thinking: streamingMessage.value.thinking })
     }
-
     if (streamingMessage.value.text) {
-      content.push({ type: 'text', text: streamingMessage.value.text })
+      headerContent.push({ type: 'text', text: streamingMessage.value.text })
     }
 
-    for (const tc of streamingMessage.value.toolCalls) {
-      content.push({
+    // If there are tool calls, include the first one in the header message
+    // so text and the first tool call appear together naturally
+    if (headerContent.length > 0 && toolCalls.length > 0) {
+      const firstTc = toolCalls[0]
+      headerContent.push({
         type: 'toolCall',
-        id: tc.id,
-        name: tc.name,
-        arguments: JSON.parse(tc.args || '{}'),
+        id: firstTc.id,
+        name: firstTc.name,
+        arguments: JSON.parse(firstTc.args || '{}'),
+      })
+      addedTcIds.add(firstTc.id)
+
+      console.log('[ChatStore] Content to add:', headerContent.length, 'items')
+      messages.value.push({
+        role: 'assistant',
+        content: headerContent,
+      })
+
+      // Add result for the first tool call
+      if (firstTc.result) {
+        messages.value.push({
+          role: 'toolResult',
+          toolCallId: firstTc.id,
+          toolName: firstTc.name,
+          content: [{ type: 'text', text: firstTc.result }],
+          isError: firstTc.isError,
+        })
+      }
+    } else if (headerContent.length > 0) {
+      // No tool calls, just text/thinking
+      console.log('[ChatStore] Content to add:', headerContent.length, 'items')
+      messages.value.push({
+        role: 'assistant',
+        content: headerContent,
       })
     }
 
-    console.log('[ChatStore] Content to add:', content.length, 'items')
-    
-    if (content.length > 0) {
-      const assistantMsg: AssistantMessage = {
-        role: 'assistant',
-        content,
-      }
-      console.log('[ChatStore] Adding assistant message:', assistantMsg)
-      messages.value.push(assistantMsg)
-      console.log('[ChatStore] Total messages after add:', messages.value.length)
-    }
+    // For remaining tool calls, each gets its own assistant message + tool result
+    for (const tc of toolCalls) {
+      if (addedTcIds.has(tc.id)) continue
+      addedTcIds.add(tc.id)
 
-    // Also add tool result messages
-    for (const tc of streamingMessage.value.toolCalls) {
+      // Assistant message with just this tool call
+      messages.value.push({
+        role: 'assistant',
+        content: [{
+          type: 'toolCall',
+          id: tc.id,
+          name: tc.name,
+          arguments: JSON.parse(tc.args || '{}'),
+        }],
+      })
+
+      // Tool result
       if (tc.result) {
         messages.value.push({
           role: 'toolResult',
@@ -235,11 +256,8 @@ export const useChatStore = defineStore('chat', () => {
   // ── Event Handlers ──
 
   function handleEvent(event: RpcEvent) {
-    console.log('[ChatStore] Processing event:', event.type)
-    
     switch (event.type) {
       case 'agent_start':
-        console.log('[ChatStore] Agent started')
         isStreaming.value = true
         streamingMessage.value = {
           text: '',
@@ -249,21 +267,64 @@ export const useChatStore = defineStore('chat', () => {
         }
         break
 
-      case 'agent_end':
+      case 'agent_end': {
         console.log('[ChatStore] Agent ended, finalizing...')
+        // Use agent_end messages as fallback for tool calls
+        const agentMsgs = (event as any).messages
+        if (Array.isArray(agentMsgs)) {
+          for (const m of agentMsgs) {
+            if (m?.role === 'assistant' && Array.isArray(m.content)) {
+              for (const c of m.content) {
+                if (c.type === 'toolCall' && c.id && !streamingMessage.value.toolCalls.find(t => t.id === c.id)) {
+                  console.log('[ChatStore] Capturing tool call from agent_end:', c.name, c.id)
+                  streamingMessage.value.toolCalls.push({
+                    id: c.id,
+                    name: c.name || '',
+                    args: typeof c.arguments === 'string' ? c.arguments : JSON.stringify(c.arguments || {}),
+                    isComplete: true,
+                    isError: false,
+                  })
+                }
+              }
+            }
+            if (m?.role === 'toolResult' && m.toolCallId) {
+              const tc = streamingMessage.value.toolCalls.find(t => t.id === m.toolCallId)
+              if (tc) {
+                tc.result = m.content?.[0]?.text || ''
+                tc.isError = m.isError || false
+              }
+            }
+          }
+        }
         isStreaming.value = false
         finalizeStreaming()
         break
+      }
 
       case 'message_update':
-        console.log('[ChatStore] Message update received')
         updateStreaming(event)
         break
 
-      case 'message_end':
+      case 'message_end': {
         console.log('[ChatStore] Message end received')
-        // We finalize on agent_end instead to batch all tool results
+        const endMsg = (event as any).message
+        if (endMsg?.role === 'assistant' && Array.isArray(endMsg.content)) {
+          // Capture tool calls from final message if streaming didn't get them
+          for (const c of endMsg.content) {
+            if (c.type === 'toolCall' && c.id && !streamingMessage.value.toolCalls.find(t => t.id === c.id)) {
+              console.log('[ChatStore] Capturing tool call from message_end:', c.name, c.id)
+              streamingMessage.value.toolCalls.push({
+                id: c.id,
+                name: c.name || '',
+                args: typeof c.arguments === 'string' ? c.arguments : JSON.stringify(c.arguments || {}),
+                isComplete: true,
+                isError: false,
+              })
+            }
+          }
+        }
         break
+      }
 
       case 'tool_execution_start':
         onToolExecutionStart(event)

@@ -6,6 +6,106 @@ import MessageItem from './MessageItem.vue'
 const chatStore = useChatStore()
 const messageListRef = ref<HTMLDivElement | null>(null)
 
+// Parse edit tool diff from streaming tool call
+interface DiffLine {
+  type: 'add' | 'remove' | 'context'
+  text: string
+}
+
+function parseEditDiff(args: string): DiffLine[] {
+  try {
+    const parsed = JSON.parse(args)
+    if (!parsed.oldText || !parsed.newText) return []
+    
+    const oldLines = parsed.oldText.split('\n')
+    const newLines = parsed.newText.split('\n')
+    
+    // Simple LCS-based diff
+    const result: DiffLine[] = []
+    const lcs = computeLCS(oldLines, newLines)
+    
+    let oldIdx = 0
+    let newIdx = 0
+    let lcsIdx = 0
+    
+    while (oldIdx < oldLines.length || newIdx < newLines.length) {
+      if (lcsIdx < lcs.length && oldIdx < oldLines.length && newIdx < newLines.length &&
+          oldLines[oldIdx] === lcs[lcsIdx] && newLines[newIdx] === lcs[lcsIdx]) {
+        result.push({ type: 'context', text: oldLines[oldIdx] })
+        oldIdx++
+        newIdx++
+        lcsIdx++
+      } else if (lcsIdx < lcs.length && oldIdx < oldLines.length && oldLines[oldIdx] === lcs[lcsIdx]) {
+        while (newIdx < newLines.length && newLines[newIdx] !== lcs[lcsIdx]) {
+          result.push({ type: 'add', text: newLines[newIdx] })
+          newIdx++
+        }
+      } else if (lcsIdx < lcs.length && newIdx < newLines.length && newLines[newIdx] === lcs[lcsIdx]) {
+        while (oldIdx < oldLines.length && oldLines[oldIdx] !== lcs[lcsIdx]) {
+          result.push({ type: 'remove', text: oldLines[oldIdx] })
+          oldIdx++
+        }
+      } else {
+        while (oldIdx < oldLines.length) {
+          result.push({ type: 'remove', text: oldLines[oldIdx] })
+          oldIdx++
+        }
+        while (newIdx < newLines.length) {
+          result.push({ type: 'add', text: newLines[newIdx] })
+          newIdx++
+        }
+        break
+      }
+    }
+    
+    return result
+  } catch {
+    return []
+  }
+}
+
+function computeLCS(a: string[], b: string[]): string[] {
+  const m = a.length
+  const n = b.length
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0))
+  
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1])
+      }
+    }
+  }
+  
+  const result: string[] = []
+  let i = m, j = n
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      result.unshift(a[i - 1])
+      i--
+      j--
+    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+      i--
+    } else {
+      j--
+    }
+  }
+  
+  return result
+}
+
+// Get file path from edit tool args
+function getEditFilePath(args: string): string | undefined {
+  try {
+    const parsed = JSON.parse(args)
+    return parsed.path
+  } catch {
+    return undefined
+  }
+}
+
 // Auto-scroll to bottom on new messages or streaming updates
 watch(
   () => [
@@ -77,11 +177,32 @@ onMounted(async () => {
               class="tool-call-item"
             >
               <div class="tool-call-header">
-                <span class="tool-icon">🔧</span>
+                <span class="tool-icon">{{ tc.name === 'edit' ? '✏️' : tc.name === 'write' ? '📝' : tc.name === 'read' ? '📖' : tc.name === 'bash' ? '💻' : '🔧' }}</span>
                 <span class="tool-name">{{ tc.name }}</span>
+                <span v-if="tc.name === 'edit'" class="diff-badge">diff</span>
                 <span v-if="tc.isComplete" class="tool-status done">✓</span>
                 <span v-else class="tool-status running">⋯</span>
               </div>
+              <!-- Edit tool diff view -->
+              <div v-if="tc.name === 'edit' && parseEditDiff(tc.args).length > 0" class="edit-diff">
+                <div v-if="getEditFilePath(tc.args)" class="diff-file-path">📄 {{ getEditFilePath(tc.args) }}</div>
+                <div class="diff-content">
+                  <div
+                    v-for="(line, idx) in parseEditDiff(tc.args)"
+                    :key="idx"
+                    class="diff-line"
+                    :class="'diff-line--' + line.type"
+                  >
+                    <span class="diff-line-prefix">{{ line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' ' }}</span>
+                    <span class="diff-line-text">{{ line.text }}</span>
+                  </div>
+                </div>
+              </div>
+              <!-- Non-edit tool args -->
+              <details v-else-if="tc.args && tc.args !== '{}' && tc.name !== 'edit'" class="tool-args-details">
+                <summary>Arguments</summary>
+                <pre class="tool-args">{{ tc.args }}</pre>
+              </details>
               <div v-if="tc.result" class="tool-result">
                 <pre>{{ tc.result }}</pre>
               </div>
@@ -281,5 +402,101 @@ onMounted(async () => {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.diff-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-glow);
+  color: var(--accent-color);
+  font-size: 0.75em;
+  font-weight: 500;
+}
+
+.edit-diff {
+  margin-top: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.diff-file-path {
+  padding: 4px 10px;
+  background: var(--tool-header-bg);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.8em;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  color: var(--muted-color);
+}
+
+.diff-content {
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 0.82em;
+  line-height: 1.5;
+  overflow-x: auto;
+  background: var(--code-bg);
+}
+
+.diff-line {
+  display: flex;
+  min-height: 1.5em;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-line-prefix {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+}
+
+.diff-line-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.diff-line--add {
+  background: var(--success-bg);
+  color: var(--success-color);
+}
+
+.diff-line--add .diff-line-prefix {
+  color: var(--success-color);
+}
+
+.diff-line--remove {
+  background: var(--error-bg);
+  color: var(--error-color);
+}
+
+.diff-line--remove .diff-line-prefix {
+  color: var(--error-color);
+}
+
+.diff-line--context {
+  color: var(--text-color);
+}
+
+.tool-args-details {
+  margin-top: 4px;
+  font-size: 0.85em;
+}
+
+.tool-args-details summary {
+  cursor: pointer;
+  color: var(--muted-color);
+  padding: 2px 8px;
+}
+
+.tool-args {
+  margin: 4px 0 0;
+  padding: 8px;
+  background: var(--code-bg);
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.9em;
 }
 </style>

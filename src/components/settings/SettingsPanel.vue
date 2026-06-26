@@ -23,17 +23,14 @@ const sessionStore = useSessionStore()
 // Tab state
 const activeTab = ref<'model' | 'general' | 'session' | 'config'>('model')
 
-// Working directory
-const cwdInput = ref(settingsStore.cwd)
+// Working directory is now managed per-session in chat
 
 // Pi Agent settings
 const agentSettings = ref<PiAgentSettings>({})
 const agentAuth = ref<PiAgentAuth>({})
 const isLoadingAgent = ref(false)
 
-function saveCwd() {
-  settingsStore.setCwd(cwdInput.value)
-}
+
 
 // Session controls
 const sessionPath = ref('')
@@ -143,16 +140,6 @@ onMounted(() => {
 
       <!-- General Settings -->
       <div v-if="activeTab === 'general'" class="tab-panel">
-        <h3 class="section-title">Working Directory</h3>
-        <div class="form-group">
-          <input
-            v-model="cwdInput"
-            class="form-input mono"
-            placeholder="e.g., C:\Users\huoying\code\my-project"
-          />
-          <button class="btn btn-primary save-btn" @click="saveCwd">Save</button>
-        </div>
-
         <h3 class="section-title">Shell Configuration</h3>
         <div class="form-group">
           <label class="form-label">Shell Path</label>

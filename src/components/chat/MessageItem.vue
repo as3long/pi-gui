@@ -4,6 +4,9 @@ import type { AgentMessage, AssistantMessage, UserMessage, ToolResultMessage } f
 import MarkdownRenderer from '../common/MarkdownRenderer.vue'
 import DiffRenderer from '../common/DiffRenderer.vue'
 import CodeBlock from '../common/CodeBlock.vue'
+import { useChatStore } from '../../stores/chat'
+
+const chatStore = useChatStore()
 
 const props = defineProps<{
   message: AgentMessage
@@ -44,6 +47,38 @@ interface ToolCallInfo {
   diff?: { oldText: string; newText: string; filePath?: string } | null
 }
 
+// Find corresponding tool call for toolResult message
+const correspondingToolCall = computed(() => {
+  if (!isToolResult.value) return null
+  const resultMsg = props.message as ToolResultMessage
+  // Find in messages array - look for the assistant message before this toolResult
+  const msgIndex = chatStore.messages.indexOf(props.message)
+  for (let i = msgIndex - 1; i >= 0; i--) {
+    const msg = chatStore.messages[i]
+    if (msg.role === 'assistant') {
+      const assistantMsg = msg as AssistantMessage
+      const tc = assistantMsg.content.find(
+        c => c.type === 'toolCall' && (c as any).id === resultMsg.toolCallId
+      )
+      if (tc) {
+        const args = (tc as any).arguments
+        const name = (tc as any).name
+        return {
+          name,
+          args,
+          diff: name === 'edit' && args.oldText && args.newText ? {
+            oldText: String(args.oldText),
+            newText: String(args.newText),
+            filePath: args.path ? String(args.path) : undefined,
+          } : null
+        }
+      }
+      break
+    }
+  }
+  return null
+})
+
 const toolCalls = computed(() => {
   if (!isAssistant.value) return []
   return assistantMsg.value.content.filter(c => c.type === 'toolCall').map(c => {
@@ -77,59 +112,6 @@ interface DiffLine {
   newLineNum?: number
   text: string
 }
-
-const editDiffLines = computed((): DiffLine[] => {
-  const tc = toolCalls.value.find(t => t.diff)
-  if (!tc?.diff) return []
-  
-  const oldLines = tc.diff.oldText.split('\n')
-  const newLines = tc.diff.newText.split('\n')
-  
-  // Simple LCS-based diff
-  const result: DiffLine[] = []
-  const lcs = computeLCS(oldLines, newLines)
-  
-  let oldIdx = 0
-  let newIdx = 0
-  let lcsIdx = 0
-  let oldLineNum = 1
-  let newLineNum = 1
-  
-  while (oldIdx < oldLines.length || newIdx < newLines.length) {
-    if (lcsIdx < lcs.length && oldIdx < oldLines.length && newIdx < newLines.length &&
-        oldLines[oldIdx] === lcs[lcsIdx] && newLines[newIdx] === lcs[lcsIdx]) {
-      result.push({ type: 'context', oldLineNum: oldLineNum++, newLineNum: newLineNum++, text: oldLines[oldIdx] })
-      oldIdx++
-      newIdx++
-      lcsIdx++
-    } else if (lcsIdx < lcs.length && oldIdx < oldLines.length && oldLines[oldIdx] === lcs[lcsIdx]) {
-      // New lines added
-      while (newIdx < newLines.length && newLines[newIdx] !== lcs[lcsIdx]) {
-        result.push({ type: 'add', newLineNum: newLineNum++, text: newLines[newIdx] })
-        newIdx++
-      }
-    } else if (lcsIdx < lcs.length && newIdx < newLines.length && newLines[newIdx] === lcs[lcsIdx]) {
-      // Old lines removed
-      while (oldIdx < oldLines.length && oldLines[oldIdx] !== lcs[lcsIdx]) {
-        result.push({ type: 'remove', oldLineNum: oldLineNum++, text: oldLines[oldIdx] })
-        oldIdx++
-      }
-    } else {
-      // Remaining lines at end
-      while (oldIdx < oldLines.length) {
-        result.push({ type: 'remove', oldLineNum: oldLineNum++, text: oldLines[oldIdx] })
-        oldIdx++
-      }
-      while (newIdx < newLines.length) {
-        result.push({ type: 'add', newLineNum: newLineNum++, text: newLines[newIdx] })
-        newIdx++
-      }
-      break
-    }
-  }
-  
-  return result
-})
 
 function computeLCS(a: string[], b: string[]): string[] {
   const m = a.length
@@ -183,6 +165,55 @@ const codeBlocks = computed(() => {
 // Text without code blocks
 const textWithoutCode = computed(() => {
   return textContent.value.replace(/```[\s\S]*?```/g, '').trim()
+})
+
+const editDiffLines = computed((): DiffLine[] => {
+  const tc = correspondingToolCall.value
+  if (!tc?.diff) return []
+  
+  const oldLines = tc.diff.oldText.split('\n')
+  const newLines = tc.diff.newText.split('\n')
+  
+  const result: DiffLine[] = []
+  const lcs = computeLCS(oldLines, newLines)
+  
+  let oldIdx = 0
+  let newIdx = 0
+  let lcsIdx = 0
+  let oldLineNum = 1
+  let newLineNum = 1
+  
+  while (oldIdx < oldLines.length || newIdx < newLines.length) {
+    if (lcsIdx < lcs.length && oldIdx < oldLines.length && newIdx < newLines.length &&
+        oldLines[oldIdx] === lcs[lcsIdx] && newLines[newIdx] === lcs[lcsIdx]) {
+      result.push({ type: 'context', oldLineNum: oldLineNum++, newLineNum: newLineNum++, text: oldLines[oldIdx] })
+      oldIdx++
+      newIdx++
+      lcsIdx++
+    } else if (lcsIdx < lcs.length && oldIdx < oldLines.length && oldLines[oldIdx] === lcs[lcsIdx]) {
+      while (newIdx < newLines.length && newLines[newIdx] !== lcs[lcsIdx]) {
+        result.push({ type: 'add', newLineNum: newLineNum++, text: newLines[newIdx] })
+        newIdx++
+      }
+    } else if (lcsIdx < lcs.length && newIdx < newLines.length && newLines[newIdx] === lcs[lcsIdx]) {
+      while (oldIdx < oldLines.length && oldLines[oldIdx] !== lcs[lcsIdx]) {
+        result.push({ type: 'remove', oldLineNum: oldLineNum++, text: oldLines[oldIdx] })
+        oldIdx++
+      }
+    } else {
+      while (oldIdx < oldLines.length) {
+        result.push({ type: 'remove', oldLineNum: oldLineNum++, text: oldLines[oldIdx] })
+        oldIdx++
+      }
+      while (newIdx < newLines.length) {
+        result.push({ type: 'add', newLineNum: newLineNum++, text: newLines[newIdx] })
+        newIdx++
+      }
+      break
+    }
+  }
+  
+  return result
 })
 </script>
 
@@ -261,6 +292,22 @@ const textWithoutCode = computed(() => {
         <div class="tool-result-header">
           <span class="tool-icon">{{ toolResultMsg.isError ? '❌' : '✅' }}</span>
           <span class="tool-name">{{ toolResultMsg.toolName }}</span>
+          <span v-if="correspondingToolCall?.diff" class="diff-badge">diff</span>
+        </div>
+        <!-- Edit tool diff view -->
+        <div v-if="correspondingToolCall?.diff" class="edit-diff">
+          <div v-if="correspondingToolCall.diff.filePath" class="diff-file-path">📄 {{ correspondingToolCall.diff.filePath }}</div>
+          <div class="diff-content">
+            <div
+              v-for="(line, idx) in editDiffLines"
+              :key="idx"
+              class="diff-line"
+              :class="'diff-line--' + line.type"
+            >
+              <span class="diff-line-prefix">{{ line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' ' }}</span>
+              <span class="diff-line-text">{{ line.text }}</span>
+            </div>
+          </div>
         </div>
         <div class="tool-result-content">
           <DiffRenderer :text="toolResultMsg.content?.[0]?.text || ''" />
@@ -514,5 +561,81 @@ const textWithoutCode = computed(() => {
   white-space: pre-wrap;
   word-break: break-all;
   font-size: 0.95em;
+}
+
+.diff-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-glow);
+  color: var(--accent-color);
+  font-size: 0.75em;
+  font-weight: 500;
+}
+
+.edit-diff {
+  margin-top: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.diff-file-path {
+  padding: 4px 10px;
+  background: var(--tool-header-bg);
+  border-bottom: 1px solid var(--border-color);
+  font-size: 0.8em;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  color: var(--muted-color);
+}
+
+.diff-content {
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 0.82em;
+  line-height: 1.5;
+  overflow-x: auto;
+  background: var(--code-bg);
+}
+
+.diff-line {
+  display: flex;
+  min-height: 1.5em;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-line-prefix {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-weight: 700;
+  user-select: none;
+}
+
+.diff-line-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.diff-line--add {
+  background: var(--success-bg);
+  color: var(--success-color);
+}
+
+.diff-line--add .diff-line-prefix {
+  color: var(--success-color);
+}
+
+.diff-line--remove {
+  background: var(--error-bg);
+  color: var(--error-color);
+}
+
+.diff-line--remove .diff-line-prefix {
+  color: var(--error-color);
+}
+
+.diff-line--context {
+  color: var(--text-color);
 }
 </style>

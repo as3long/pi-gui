@@ -11,6 +11,10 @@ const selectedOption = ref<string>('')
 const inputValue = ref<string>('')
 const editorValue = ref<string>('')
 
+// Notify state
+const notifyVisible = ref(false)
+let notifyTimer: ReturnType<typeof setTimeout> | null = null
+
 // Close the dialog (calls respond with undefined)
 function cancel() {
   if (request.value) {
@@ -41,13 +45,7 @@ function confirmConfirm() {
   uiStore.respond(true)
 }
 
-// When request changes, reset local state
-watch(request, (newReq) => {
-  if (!newReq) return
-  selectedOption.value = newReq.options?.[0] || ''
-  inputValue.value = newReq.placeholder || ''
-  editorValue.value = newReq.prefill || ''
-})
+
 
 // Auto‑focus first input element when dialog appears
 onMounted(() => {
@@ -58,10 +56,58 @@ const isSelect = computed(() => request.value?.method === 'select')
 const isConfirm = computed(() => request.value?.method === 'confirm')
 const isInput = computed(() => request.value?.method === 'input')
 const isEditor = computed(() => request.value?.method === 'editor')
+const isNotify = computed(() => request.value?.method === 'notify')
+
+// Handle notify auto-dismiss
+watch(request, (newReq) => {
+  if (!newReq) return
+  
+  // Reset local state for other types
+  selectedOption.value = newReq.options?.[0] || ''
+  inputValue.value = newReq.placeholder || ''
+  editorValue.value = newReq.prefill || ''
+  
+  // Handle notify type
+  if (newReq.method === 'notify') {
+    notifyVisible.value = true
+    // Clear previous timer
+    if (notifyTimer) {
+      clearTimeout(notifyTimer)
+    }
+    // Auto dismiss after 8 seconds
+    notifyTimer = setTimeout(() => {
+      dismissNotify()
+    }, 8000)
+  }
+})
+
+function dismissNotify() {
+  if (request.value?.method === 'notify') {
+    piExtensionUiResponse(request.value.id)
+    uiStore.respond(undefined)
+  }
+  notifyVisible.value = false
+  if (notifyTimer) {
+    clearTimeout(notifyTimer)
+    notifyTimer = null
+  }
+}
 </script>
 
 <template>
-  <div v-if="request" class="overlay">
+  <!-- Notify Toast (right top, no overlay) -->
+  <Transition name="notify-fade">
+    <div v-if="isNotify && notifyVisible" class="notify-toast">
+      <div class="notify-content">
+        <span v-if="request.title" class="notify-title">{{ request.title }}</span>
+        <span v-if="request.message" class="notify-message">{{ request.message }}</span>
+      </div>
+      <button class="notify-close" @click="dismissNotify">✕</button>
+    </div>
+  </Transition>
+
+  <!-- Other Dialog Types (with overlay) -->
+  <div v-if="request && !isNotify" class="overlay">
     <div class="dialog">
       <!-- Title -->
       <h3 class="dialog-title">{{ request.title || 'Prompt' }}</h3>
@@ -185,5 +231,74 @@ const isEditor = computed(() => request.value?.method === 'editor')
 
 .btn:hover {
   background: var(--hover-bg);
+}
+
+/* Notify Toast */
+.notify-toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10000;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 240px;
+  max-width: 400px;
+}
+
+.notify-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notify-title {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.notify-message {
+  font-size: 0.85em;
+  color: var(--muted-color);
+  line-height: 1.4;
+}
+
+.notify-close {
+  background: none;
+  border: none;
+  color: var(--muted-color);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: 0.9em;
+  line-height: 1;
+  border-radius: 4px;
+}
+
+.notify-close:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+
+/* Notify Transition */
+.notify-fade-enter-active,
+.notify-fade-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.notify-fade-enter-from {
+  opacity: 0;
+  transform: translateX(20px);
+}
+
+.notify-fade-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
 }
 </style>

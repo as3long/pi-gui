@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useSettingsStore } from './settings'
+import { piGetSessionStats } from '../ipc/bridge'
 import type {
   SessionInfo,
   SessionStats,
@@ -166,6 +167,8 @@ export const useSessionStore = defineStore('session', () => {
 
     if (event.type === 'agent_end') {
       sessionStatus.value = 'idle'
+      // Refresh stats after agent completes
+      scheduleStatsRefresh(500)
     }
   }
 
@@ -190,6 +193,59 @@ export const useSessionStore = defineStore('session', () => {
 
   function clearError() {
     lastError.value = null
+  }
+
+  // ── Stats Refresh ──
+  let statsRefreshInterval: ReturnType<typeof setInterval> | null = null
+  let statsRefreshTimeout: ReturnType<typeof setTimeout> | null = null
+
+  /**
+   * Refresh stats from the backend.
+   * Used on startup and after agent runs complete.
+   */
+  async function refreshStats() {
+    try {
+      await piGetSessionStats()
+    } catch (e) {
+      console.warn('[SessionStore] refreshStats failed:', e)
+    }
+  }
+
+  /**
+   * Start periodic stats refresh (every 10 seconds when idle).
+   */
+  function startStatsRefresh() {
+    if (statsRefreshInterval) return
+    statsRefreshInterval = setInterval(() => {
+      if (sessionStatus.value === 'idle') {
+        refreshStats()
+      }
+    }, 10_000)
+  }
+
+  /**
+   * Stop periodic stats refresh.
+   */
+  function stopStatsRefresh() {
+    if (statsRefreshInterval) {
+      clearInterval(statsRefreshInterval)
+      statsRefreshInterval = null
+    }
+    if (statsRefreshTimeout) {
+      clearTimeout(statsRefreshTimeout)
+      statsRefreshTimeout = null
+    }
+  }
+
+  /**
+   * Schedule a stats refresh after a delay (e.g., after agent_end).
+   * Debounces so rapid events don't flood with requests.
+   */
+  function scheduleStatsRefresh(delayMs = 1000) {
+    if (statsRefreshTimeout) clearTimeout(statsRefreshTimeout)
+    statsRefreshTimeout = setTimeout(() => {
+      refreshStats()
+    }, delayMs)
   }
 
   // ── Workspace Actions ──
@@ -291,6 +347,10 @@ export const useSessionStore = defineStore('session', () => {
     updateSessionSnapshot,
     setStats,
     clearError,
+    refreshStats,
+    startStatsRefresh,
+    stopStatsRefresh,
+    scheduleStatsRefresh,
 
     // Workspace Actions
     setWorkspaces,

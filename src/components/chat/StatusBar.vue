@@ -26,6 +26,7 @@ const contextTokens = computed(() => sessionStore.stats?.contextUsage?.tokens ??
 const contextWindow = computed(() => sessionStore.stats?.contextUsage?.contextWindow ?? 0)
 const contextPercent = computed(() => sessionStore.stats?.contextUsage?.percent ?? 0)
 const thinkingLevel = computed(() => settingsStore.thinkingLevel)
+const cwd = computed(() => settingsStore.cwd)
 
 const contextDisplay = computed(() => {
   if (!contextWindow.value) return null
@@ -41,6 +42,7 @@ const contextDisplay = computed(() => {
     <span class="stat" title="Context usage">CH{{ contextPercent.toFixed(1) }}%</span>
     <span class="stat" title="Cost">{{ formatCost(cost) }}</span>
     <span class="stat" title="Context window">{{ contextDisplay }}</span>
+    <span class="stat cwd" :title="`Working Directory: ${cwd}`">📂 {{ cwd || 'Not set' }}</span>
     <span class="stat thinking" :title="`Thinking: ${thinkingLevel}`">({{ thinkingLevel }})</span>
   </div>
 </template>
@@ -67,5 +69,12 @@ const contextDisplay = computed(() => {
 
 .stat.thinking {
   color: var(--accent-color);
+}
+
+.stat.cwd {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

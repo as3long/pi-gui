@@ -119,6 +119,13 @@ onMounted(async () => {
       piGetSessionStats().catch(e => console.warn('[PiGUI] session-stats failed:', e)),
       loadDirectory(cwd).catch(e => console.warn('[PiGUI] load-directory failed:', e)),
     ])
+
+    // Start periodic stats refresh and do an initial delayed refresh
+    // (pi may not have fully initialized stats on first call)
+    sessionStore.startStatsRefresh()
+    setTimeout(() => {
+      sessionStore.refreshStats()
+    }, 2000)
     
     // Lazy-load models in background (slow network call, don't block startup)
     piGetAvailableModels()
@@ -131,6 +138,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  sessionStore.stopStatsRefresh()
   if (cleanupEvents) {
     cleanupEvents()
   }

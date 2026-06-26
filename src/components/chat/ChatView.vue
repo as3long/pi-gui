@@ -3,17 +3,28 @@ import MessageList from './MessageList.vue'
 import InputArea from '../input/InputArea.vue'
 import ModelPicker from '../settings/ModelPicker.vue'
 import StatusBar from './StatusBar.vue'
+import { computed } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useSessionStore } from '../../stores/session'
 import { useSettingsStore } from '../../stores/settings'
 import { piPrompt, piSteer, piAbort, piStart, piNewSession, piGetSessionStats, piCompactSession } from '../../ipc/bridge'
-import { watch } from 'vue'
+import { watch, ref } from 'vue'
 
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
 
 let messageIdCounter = 0
+const showCwdEditor = ref(false)
+const cwdInput = ref(settingsStore.cwd)
+
+// Computed cwd from session workspace or fallback to settings
+const currentCwd = computed(() => {
+  if (sessionStore.currentWorkspace?.path) {
+    return sessionStore.currentWorkspace.path
+  }
+  return settingsStore.cwd
+})
 
 async function onSend(message: string) {
   console.log('[PiGUI] onSend called with:', message)
@@ -21,7 +32,7 @@ async function onSend(message: string) {
   // Auto-start pi if not running
   if (!sessionStore.isRunning) {
     try {
-      const cwd = settingsStore.cwd || 'C:\\Users\\huoying\\code'
+      const cwd = currentCwd.value || 'C:\\Users\\huoying\\code'
       console.log('[PiGUI] Starting pi with cwd:', cwd)
       await piStart(cwd)
       sessionStore.isRunning = true
@@ -85,6 +96,11 @@ async function onCompact() {
   }
 }
 
+function saveCwd() {
+  settingsStore.setCwd(cwdInput.value)
+  showCwdEditor.value = false
+}
+
 // Periodically refresh stats while streaming
 let statsInterval: ReturnType<typeof setInterval> | null = null
 watch(() => chatStore.isStreaming, (streaming) => {
@@ -115,6 +131,23 @@ watch(() => chatStore.isStreaming, (streaming) => {
         <span v-if="sessionStore.sessionName" class="session-name">
           {{ sessionStore.sessionName }}
         </span>
+        <span class="cwd-display" @click="showCwdEditor = !showCwdEditor" title="Click to edit working directory">
+          📂 {{ currentCwd || 'Not set' }}
+        </span>
+      </div>
+    </div>
+
+    <!-- CWD Editor -->
+    <div v-if="showCwdEditor" class="cwd-editor">
+      <div class="cwd-editor-row">
+        <input
+          v-model="cwdInput"
+          class="cwd-input"
+          placeholder="e.g., C:\Users\huoying\code\my-project"
+          @keydown.enter="saveCwd"
+        />
+        <button class="btn btn-primary" @click="saveCwd">Save</button>
+        <button class="btn btn-secondary" @click="showCwdEditor = false">Cancel</button>
       </div>
     </div>
 
@@ -282,6 +315,79 @@ watch(() => chatStore.isStreaming, (streaming) => {
 
 .toolbar-label {
   font-weight: 500;
+}
+
+/* CWD Editor */
+.cwd-editor {
+  padding: 8px 12px;
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.cwd-editor-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cwd-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-color);
+  color: var(--text-color);
+  font-family: 'SF Mono', monospace;
+  font-size: 0.85em;
+}
+
+.cwd-input:focus {
+  border-color: var(--accent-color);
+  outline: none;
+}
+
+.btn {
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85em;
+  transition: all 0.15s;
+}
+
+.btn-primary {
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--muted-color);
+}
+
+.btn-secondary:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+
+.cwd-display {
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cwd-display:hover {
+  background: var(--hover-bg);
 }
 
 .messages-area {

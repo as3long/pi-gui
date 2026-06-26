@@ -122,9 +122,19 @@ fn pi_get_available_models() -> Result<serde_json::Value, String> {
     
     eprintln!("[PiGUI] Running: {} --list-models", pi_path);
     
-    let output = std::process::Command::new(&pi_path)
-        .arg("--list-models")
-        .output()
+    let mut cmd = std::process::Command::new(&pi_path);
+    cmd.arg("--list-models");
+    
+    // Windows-specific: hide console window
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    }
+    
+    let output = cmd.output()
         .map_err(|e| format!("Failed to run pi --list-models: {}", e))?;
     
     if !output.status.success() {
