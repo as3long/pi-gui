@@ -8,6 +8,9 @@ import type {
   MessageContent,
 } from '../ipc/types'
 
+// Throttle streaming updates to prevent UI jank (60fps = ~16ms)
+const STREAMING_THROTTLE_MS = 16
+
 /**
  * Chat store manages the conversation messages and streaming state.
  */
@@ -27,6 +30,10 @@ export const useChatStore = defineStore('chat', () => {
     toolCalls: [],
     isComplete: true,
   })
+  // Buffered updates for throttling
+  let bufferedText = ''
+  let bufferedThinking = ''
+  let streamingThrottleTimer: ReturnType<typeof setTimeout> | null = null
 
   // Watch for message changes and save to localStorage
   watch(
@@ -76,6 +83,18 @@ export const useChatStore = defineStore('chat', () => {
     messages.value.push(msg)
   }
 
+  function flushBufferedStreaming() {
+    if (bufferedText) {
+      streamingMessage.value.text += bufferedText
+      bufferedText = ''
+    }
+    if (bufferedThinking) {
+      streamingMessage.value.thinking += bufferedThinking
+      bufferedThinking = ''
+    }
+    streamingThrottleTimer = null
+  }
+
   function updateStreaming(event: RpcEvent) {
     if (event.type !== 'message_update') return
     const msgEvent = (event as any).assistant_message_event || (event as any).assistantMessageEvent
@@ -84,13 +103,29 @@ export const useChatStore = defineStore('chat', () => {
     streamingMessage.value.isComplete = false
 
     switch (msgEvent.type) {
-      case 'text_delta':
-        streamingMessage.value.text += msgEvent.delta || ''
+      case 'text_delta': {
+        const delta = msgEvent.delta || ''
+        if (!streamingThrottleTimer) {
+          streamingMessage.value.text += delta
+          streamingThrottleTimer = setTimeout(flushBufferedStreaming, STREAMING_THROTTLE_MS)
+        } else {
+          bufferedText += delta
+        }
         break
-      case 'thinking_delta':
-        streamingMessage.value.thinking += msgEvent.delta || ''
+      }
+      case 'thinking_delta': {
+        const delta = msgEvent.delta || ''
+        if (!streamingThrottleTimer) {
+          streamingMessage.value.thinking += delta
+          streamingThrottleTimer = setTimeout(flushBufferedStreaming, STREAMING_THROTTLE_MS)
+        } else {
+          bufferedThinking += delta
+        }
         break
+      }
       case 'toolcall_start': {
+        // Flush buffer immediately for structural changes
+        flushBufferedStreaming()
         const toolCall = msgEvent.tool_call as any
         const tcId = toolCall?.id || toolCall?.toolCallId || toolCall?.tool_call_id
         const tcName = toolCall?.name || toolCall?.toolName || toolCall?.tool_name || ''
@@ -107,6 +142,8 @@ export const useChatStore = defineStore('chat', () => {
         break
       }
       case 'toolcall_delta': {
+        // Flush buffer immediately for structural changes
+        flushBufferedStreaming()
         const tc = msgEvent.tool_call as { id?: string; arguments?: string } | undefined
         if (tc?.id) {
           const existing = streamingMessage.value.toolCalls.find((t) => t.id === tc.id)
@@ -118,6 +155,7 @@ export const useChatStore = defineStore('chat', () => {
       }
       case 'toolcall_end': {
         // tool call complete - it'll be followed by execution events
+        flushBufferedStreaming()
         break
       }
     }
@@ -159,6 +197,12 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function finalizeStreaming() {
+    // Flush any remaining buffered content first
+    flushBufferedStreaming()
+    if (streamingThrottleTimer) {
+      clearTimeout(streamingThrottleTimer)
+      streamingThrottleTimer = null
+    }
     // Build messages in chronological order:
     // 1. Assistant text/thinking (if any)
     // 2. For each tool call: assistant toolCall → toolResult
@@ -259,6 +303,13 @@ export const useChatStore = defineStore('chat', () => {
     switch (event.type) {
       case 'agent_start':
         isStreaming.value = true
+        // Reset buffers
+        bufferedText = ''
+        bufferedThinking = ''
+        if (streamingThrottleTimer) {
+          clearTimeout(streamingThrottleTimer)
+          streamingThrottleTimer = null
+        }
         streamingMessage.value = {
           text: '',
           thinking: '',

@@ -9,6 +9,7 @@ import {
   piGetAgentSettings, 
   piSetAgentSettings,
   piGetAgentAuth,
+  piGetState,
   type PiAgentSettings,
   type PiAgentAuth 
 } from '../../ipc/bridge'
@@ -48,7 +49,8 @@ async function loadAgentConfig() {
   try {
     const [settings, auth] = await Promise.all([
       piGetAgentSettings(),
-      piGetAgentAuth()
+      piGetAgentAuth(),
+      piGetState() // Also get current state to refresh currentModel
     ])
     agentSettings.value = settings
     agentAuth.value = auth
@@ -123,16 +125,16 @@ onMounted(() => {
           <h4 class="subsection-title">Current Configuration</h4>
           <div class="info-grid">
             <div class="info-item">
-              <span class="info-label">Default Provider</span>
-              <span class="info-value">{{ agentSettings.defaultProvider || 'Not set' }}</span>
+              <span class="info-label">Current Provider</span>
+              <span class="info-value">{{ sessionStore.currentModel?.provider || agentSettings.defaultProvider || 'Not set' }}</span>
             </div>
             <div class="info-item">
-              <span class="info-label">Default Model</span>
-              <span class="info-value">{{ agentSettings.defaultModel || 'Not set' }}</span>
+              <span class="info-label">Current Model</span>
+              <span class="info-value">{{ sessionStore.currentModel?.name || sessionStore.currentModel?.id || agentSettings.defaultModel || 'Not set' }}</span>
             </div>
             <div class="info-item">
               <span class="info-label">Thinking Level</span>
-              <span class="info-value">{{ settingsStore.thinkingLevel || 'Not set' }}</span>
+              <span class="info-value">{{ sessionStore.thinkingLevel || settingsStore.thinkingLevel || 'Not set' }}</span>
             </div>
           </div>
         </div>

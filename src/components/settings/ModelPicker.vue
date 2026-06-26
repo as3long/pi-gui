@@ -151,7 +151,7 @@ onUnmounted(() => {
             v-for="level in thinkingLevels"
             :key="level"
             class="thinking-btn"
-            :class="{ active: settingsStore.thinkingLevel === level }"
+            :class="{ active: (sessionStore.thinkingLevel || settingsStore.thinkingLevel) === level }"
             @click="changeThinkingLevel(level)"
           >
             {{ level }}

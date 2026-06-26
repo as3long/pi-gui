@@ -90,25 +90,25 @@ onMounted(async () => {
 
   // Register event handlers for stores
   onPiEvent('*', (event) => {
-    if (event.type === 'response') {
-      const resp = event as any
-      console.log('[PiGUI] Response event:', {
-        command: resp.command,
-        success: resp.success,
-        hasData: !!resp.data,
-        dataKeys: resp.data ? Object.keys(resp.data) : []
-      })
-      if (resp.data) {
-        console.log('[PiGUI] Response data:', JSON.stringify(resp.data, null, 2).substring(0, 1500))
+    // Skip verbose logging for high-frequency streaming events
+    if (event.type !== 'message_update' && event.type !== 'tool_execution_update') {
+      if (event.type === 'response') {
+        const resp = event as any
+        console.log('[PiGUI] Response event:', {
+          command: resp.command,
+          success: resp.success,
+          hasData: !!resp.data,
+          dataKeys: resp.data ? Object.keys(resp.data) : []
+        })
+        if (resp.data) {
+          console.log('[PiGUI] Response data:', JSON.stringify(resp.data, null, 2).substring(0, 1500))
+        }
+      } else {
+        console.log('[PiGUI] Received event:', event.type)
       }
-    } else {
-      console.log('[PiGUI] Received event:', event.type)
     }
-    console.log('[PiGUI] Calling chatStore.handleEvent...')
     chatStore.handleEvent(event)
-    console.log('[PiGUI] Calling sessionStore.handleEvent...')
     sessionStore.handleEvent(event)
-    console.log('[PiGUI] Event handlers completed')
   })
 
   // Register keyboard shortcuts

@@ -79,7 +79,7 @@ async function changeThinkingLevel(level: string) {
         v-for="level in thinkingLevels"
         :key="level"
         class="btn thinking-btn"
-        :class="{ active: settingsStore.thinkingLevel === level }"
+        :class="{ active: (sessionStore.thinkingLevel || settingsStore.thinkingLevel) === level }"
         @click="changeThinkingLevel(level)"
       >
         {{ level }}

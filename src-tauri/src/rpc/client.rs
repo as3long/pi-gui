@@ -205,7 +205,22 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
         // Forward raw JSON line to frontend as a Tauri event
         let _ = app_handle.emit("pi:raw", &line);
 
-        // Also try to parse and emit typed events
+        // Quick pattern match on type field to avoid full JSON parsing for high-frequency events
+        // message_update is the most frequent event (streaming), so we handle it specially
+        if line.contains(r#"type":"message_update"#) {
+            let _ = app_handle.emit("pi:message_update", &line);
+            continue;
+        }
+        if line.contains(r#"type":"message_delta"#) {
+            let _ = app_handle.emit("pi:message_delta", &line);
+            continue;
+        }
+        if line.contains(r#"type":"tool_execution_update"#) {
+            let _ = app_handle.emit("pi:tool_execution_update", &line);
+            continue;
+        }
+
+        // For less frequent events, do full JSON parsing
         if let Ok(event) = serde_json::from_str::<RpcEvent>(&line) {
             let event_name = match &event {
                 RpcEvent::AgentStart => "pi:agent_start",

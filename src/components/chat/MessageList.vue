@@ -106,20 +106,55 @@ function getEditFilePath(args: string): string | undefined {
   }
 }
 
+// Auto-scroll throttling - scroll at most once every 50ms
+let scrollThrottleTimer: ReturnType<typeof setTimeout> | null = null
+let pendingScroll = false
+
+function doScroll() {
+  scrollThrottleTimer = null
+  if (pendingScroll) {
+    pendingScroll = false
+    if (messageListRef.value) {
+      messageListRef.value.scrollTop = messageListRef.value.scrollHeight
+    }
+  }
+}
+
+function throttledScroll() {
+  pendingScroll = true
+  if (!scrollThrottleTimer) {
+    nextTick(() => {
+      doScroll()
+      scrollThrottleTimer = setTimeout(doScroll, 50)
+    })
+  }
+}
+
 // Auto-scroll to bottom on new messages or streaming updates
 watch(
-  () => [
-    chatStore.messages.length,
-    chatStore.streamingMessage.text,
-    chatStore.streamingMessage.thinking,
-  ],
+  () => chatStore.messages.length,
   async () => {
+    // Full scroll immediately for new messages
     await nextTick()
     if (messageListRef.value) {
       messageListRef.value.scrollTop = messageListRef.value.scrollHeight
     }
-  },
-  { deep: true }
+  }
+)
+
+// Throttled scroll for streaming updates
+watch(
+  () => chatStore.streamingMessage.text.length,
+  () => {
+    throttledScroll()
+  }
+)
+
+watch(
+  () => chatStore.streamingMessage.thinking.length,
+  () => {
+    throttledScroll()
+  }
 )
 
 // Scroll to bottom on mount
