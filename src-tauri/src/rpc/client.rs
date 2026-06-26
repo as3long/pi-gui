@@ -1,5 +1,4 @@
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -8,140 +7,21 @@ use tauri::{AppHandle, Emitter};
 
 use super::protocol::*;
 
-/// Find node executable in common locations
-fn find_node_exe() -> Option<String> {
-    // Different executable names on different platforms
-    let node_names = if cfg!(windows) {
-        vec!["node.exe"]
+/// Find pi executable in PATH
+fn find_pi() -> Option<String> {
+    let pi_names = if cfg!(windows) {
+        vec!["pi.cmd", "pi.exe", "pi.bat"]
     } else {
-        vec!["node", "nodejs"]
+        vec!["pi"]
     };
 
-    // 1. Check PATH first (most reliable)
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
-            for name in &node_names {
-                let node_path = dir.join(name);
-                if node_path.exists() {
-                    return Some(node_path.to_string_lossy().to_string());
+            for name in &pi_names {
+                let pi_path = dir.join(name);
+                if pi_path.exists() {
+                    return Some(pi_path.to_string_lossy().to_string());
                 }
-            }
-        }
-    }
-
-    // 2. Check fnm multishells directory (Windows only)
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-            let fnm_multishells = PathBuf::from(local_app_data).join("fnm_multishells");
-            if fnm_multishells.exists() {
-                if let Ok(entries) = std::fs::read_dir(&fnm_multishells) {
-                    for entry in entries.flatten() {
-                        let node_exe = entry.path().join("node.exe");
-                        if node_exe.exists() {
-                            return Some(node_exe.to_string_lossy().to_string());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Common Unix locations
-    #[cfg(unix)]
-    {
-        let common_paths = [
-            "/usr/local/bin/node",
-            "/usr/bin/node",
-            "/opt/homebrew/bin/node",
-            "/usr/local/bin/nodejs",
-        ];
-        for path in common_paths {
-            if std::path::Path::new(path).exists() {
-                return Some(path.to_string());
-            }
-        }
-    }
-
-    None
-}
-
-/// Find pi's cli.js script by looking in node_modules directories
-fn find_pi_cli_js(node_exe_path: &str) -> Option<String> {
-    let node_path = PathBuf::from(node_exe_path);
-    let node_dir = node_path.parent()?;
-
-    // 1. Check sibling node_modules (fnm multishell, npm global)
-    let cli_js = node_dir
-        .join("node_modules")
-        .join("@earendil-works")
-        .join("pi-coding-agent")
-        .join("dist")
-        .join("cli.js");
-    
-    if cli_js.exists() {
-        return Some(cli_js.to_string_lossy().to_string());
-    }
-
-    // 2. Check ../node_modules (relative)
-    if let Some(parent) = node_dir.parent() {
-        let cli_js = parent
-            .join("node_modules")
-            .join("@earendil-works")
-            .join("pi-coding-agent")
-            .join("dist")
-            .join("cli.js");
-        if cli_js.exists() {
-            return Some(cli_js.to_string_lossy().to_string());
-        }
-    }
-
-    // 3. Common npm global locations
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(home) = std::env::var("USERPROFILE") {
-            let cli_js = PathBuf::from(&home)
-                .join("AppData")
-                .join("Roaming")
-                .join("npm")
-                .join("node_modules")
-                .join("@earendil-works")
-                .join("pi-coding-agent")
-                .join("dist")
-                .join("cli.js");
-            if cli_js.exists() {
-                return Some(cli_js.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        // Unix npm/yarn global locations
-        let common_locations = [
-            "/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
-            "/usr/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
-            "/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
-        ];
-        for location in common_locations {
-            let path = std::path::Path::new(location);
-            if path.exists() {
-                return Some(location.to_string());
-            }
-        }
-
-        // User home location
-        if let Ok(home) = std::env::var("HOME") {
-            let cli_js = PathBuf::from(&home)
-                .join(".npm")
-                .join("lib")
-                .join("node_modules")
-                .join("@earendil-works")
-                .join("pi-coding-agent")
-                .join("dist")
-                .join("cli.js");
-            if cli_js.exists() {
-                return Some(cli_js.to_string_lossy().to_string());
             }
         }
     }
@@ -184,25 +64,16 @@ impl PiRpcClient {
             return Err("pi is already running".into());
         }
 
-        // 🎯 ZERO WINDOW SOLUTION: Direct node.exe execution
-        // On Windows: CREATE_NO_WINDOW hides everything
-        // On Unix: Terminal windows don't appear by default for GUI app spawned processes
-        let node_exe = find_node_exe().ok_or_else(|| {
-            eprintln!("[PiGUI] node executable not found in PATH");
-            "node not found. Please ensure Node.js is installed and in PATH.".to_string()
+        // ✅ KEEP IT SIMPLE: Just find and execute pi directly
+        let pi_path = find_pi().ok_or_else(|| {
+            let error_msg = "pi not found. Please run: npm i -g pi-coding-agent";
+            eprintln!("[PiGUI] {}", error_msg);
+            error_msg.to_string()
         })?;
 
-        let cli_js = find_pi_cli_js(&node_exe).ok_or_else(|| {
-            eprintln!("[PiGUI] pi cli.js not found near node.exe: {}", node_exe);
-            "pi cli.js not found. Please install: npm i -g pi-coding-agent".to_string()
-        })?;
+        eprintln!("[PiGUI] Found pi at: {}", pi_path);
 
-        eprintln!("[PiGUI] Using node: {}", node_exe);
-        eprintln!("[PiGUI] Using cli.js: {}", cli_js);
-
-        // ✅ DIRECT EXECUTION - NO SHELL INTERMEDIARY
-        let mut cmd = Command::new(&node_exe);
-        cmd.arg(&cli_js);
+        let mut cmd = Command::new(&pi_path);
         cmd.args(["--mode", "rpc", "--no-session"]);
 
         if let Some(m) = model {
@@ -212,8 +83,7 @@ impl PiRpcClient {
 
         cmd.current_dir(cwd);
 
-        // 🔐 Windows: Hide console window completely
-        // No flags needed on Unix - GUI apps don't create terminal windows for children
+        // Windows: hide console window
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
@@ -315,12 +185,11 @@ impl PiRpcClient {
                     .and_then(|mut c| c.wait());
             }
 
-            // Unix: Use kill -TERM then kill -KILL if needed
+            // Unix: Use kill to kill process group
             #[cfg(unix)]
             {
                 use std::process::Stdio;
                 let pid = process.id();
-                // Kill process group (negative PID)
                 let _ = Command::new("kill")
                     .args(["-TERM", &format!("-{}", pid)])
                     .stdout(Stdio::null())
@@ -329,7 +198,6 @@ impl PiRpcClient {
                     .and_then(|mut c| c.wait());
             }
 
-            // Always try to kill directly as fallback
             let _ = process.kill();
             let _ = process.wait();
         }
@@ -362,7 +230,7 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
 
         let _ = app_handle.emit("pi:raw", &line);
 
-        // Fast path for frequent events to avoid full JSON parsing
+        // Fast path for frequent events
         if line.contains(r#""type":"message_update""#) {
             let _ = app_handle.emit("pi:message_update", &line);
             continue;
@@ -404,39 +272,4 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
 
     running.store(false, Ordering::SeqCst);
     let _ = app_handle.emit("pi:process_exit", "");
-}
-
-/// Fallback find_pi for backwards compatibility
-pub fn find_pi() -> Option<String> {
-    // On Windows, look for pi.cmd
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(path) = std::env::var("PATH") {
-            for dir in std::env::split_paths(&path) {
-                let candidate_cmd = dir.join("pi.cmd");
-                if candidate_cmd.exists() {
-                    return Some(candidate_cmd.to_string_lossy().to_string());
-                }
-                let candidate_exe = dir.join("pi.exe");
-                if candidate_exe.exists() {
-                    return Some(candidate_exe.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    // On Unix, look for pi executable
-    #[cfg(unix)]
-    {
-        if let Ok(path) = std::env::var("PATH") {
-            for dir in std::env::split_paths(&path) {
-                let candidate = dir.join("pi");
-                if candidate.exists() {
-                    return Some(candidate.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    None
 }
