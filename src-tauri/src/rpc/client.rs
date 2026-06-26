@@ -1,4 +1,5 @@
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -6,6 +7,85 @@ use std::thread;
 use tauri::{AppHandle, Emitter};
 
 use super::protocol::*;
+
+/// Find node.exe in common locations
+fn find_node_exe() -> Option<String> {
+    // 1. Check PATH first (most reliable)
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let node_exe = dir.join("node.exe");
+            if node_exe.exists() {
+                return Some(node_exe.to_string_lossy().to_string());
+            }
+        }
+    }
+
+    // 2. Check fnm multishells directory
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let fnm_multishells = PathBuf::from(local_app_data).join("fnm_multishells");
+        if fnm_multishells.exists() {
+            if let Ok(entries) = std::fs::read_dir(&fnm_multishells) {
+                for entry in entries.flatten() {
+                    let node_exe = entry.path().join("node.exe");
+                    if node_exe.exists() {
+                        return Some(node_exe.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Find pi's cli.js script by looking in node_modules directories
+fn find_pi_cli_js(node_exe_path: &str) -> Option<String> {
+    let node_path = PathBuf::from(node_exe_path);
+    let node_dir = node_path.parent()?;
+
+    // 1. Check sibling node_modules (fnm multishell, npm global)
+    let cli_js = node_dir
+        .join("node_modules")
+        .join("@earendil-works")
+        .join("pi-coding-agent")
+        .join("dist")
+        .join("cli.js");
+    
+    if cli_js.exists() {
+        return Some(cli_js.to_string_lossy().to_string());
+    }
+
+    // 2. Check ../node_modules (relative)
+    if let Some(parent) = node_dir.parent() {
+        let cli_js = parent
+            .join("node_modules")
+            .join("@earendil-works")
+            .join("pi-coding-agent")
+            .join("dist")
+            .join("cli.js");
+        if cli_js.exists() {
+            return Some(cli_js.to_string_lossy().to_string());
+        }
+    }
+
+    // 3. Common npm global location
+    if let Ok(home) = std::env::var("USERPROFILE") {
+        let cli_js = PathBuf::from(&home)
+            .join("AppData")
+            .join("Roaming")
+            .join("npm")
+            .join("node_modules")
+            .join("@earendil-works")
+            .join("pi-coding-agent")
+            .join("dist")
+            .join("cli.js");
+        if cli_js.exists() {
+            return Some(cli_js.to_string_lossy().to_string());
+        }
+    }
+
+    None
+}
 
 /// Manages the pi --mode rpc subprocess lifecycle and JSONL communication.
 #[derive(Default)]
@@ -42,19 +122,25 @@ impl PiRpcClient {
             return Err("pi is already running".into());
         }
 
-        let pi_path = find_pi().ok_or_else(|| {
-            let error_msg = "pi not found. Please ensure pi-coding-agent is installed and available in PATH.";
-            eprintln!("[PiGUI] {}", error_msg);
-            error_msg.to_string()
+        // 🎯 ZERO WINDOW SOLUTION: Direct node.exe execution
+        // This completely bypasses cmd.exe - no window at all!
+        let node_exe = find_node_exe().ok_or_else(|| {
+            eprintln!("[PiGUI] node.exe not found in PATH");
+            "node.exe not found. Please ensure Node.js is installed and in PATH.".to_string()
         })?;
 
-        eprintln!("[PiGUI] Found pi at: {}", pi_path);
+        let cli_js = find_pi_cli_js(&node_exe).ok_or_else(|| {
+            eprintln!("[PiGUI] pi cli.js not found near node.exe: {}", node_exe);
+            "pi cli.js not found. Please install pi-coding-agent: npm i -g pi-coding-agent".to_string()
+        })?;
 
-        // ✅ KEEP IT SIMPLE: Direct execution + single flag
-        // No wrappers, no cmd.exe /c, just execute pi.cmd directly
-        // Windows knows how to execute .cmd files
-        let mut cmd = Command::new(&pi_path);
-        
+        eprintln!("[PiGUI] Using node.exe: {}", node_exe);
+        eprintln!("[PiGUI] Using cli.js: {}", cli_js);
+
+        // ✅ DIRECT EXECUTION - NO SHELL, NO WINDOW
+        // node.exe is a real executable, CREATE_NO_WINDOW works perfectly
+        let mut cmd = Command::new(&node_exe);
+        cmd.arg(&cli_js);
         cmd.args(["--mode", "rpc", "--no-session"]);
 
         if let Some(m) = model {
@@ -64,7 +150,8 @@ impl PiRpcClient {
 
         cmd.current_dir(cwd);
 
-        // 🔐 ONLY ONE FLAG - KEEP IT SIMPLE
+        // 🔐 CREATE_NO_WINDOW works 100% for real executables!
+        // The window flash was only from cmd.exe, which we are now bypassing
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
@@ -72,7 +159,7 @@ impl PiRpcClient {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        eprintln!("[PiGUI] Spawning pi process...");
+        eprintln!("[PiGUI] Spawning pi directly via node.exe...");
 
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -238,6 +325,7 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
     let _ = app_handle.emit("pi:process_exit", "");
 }
 
+/// Find the pi binary in PATH or common locations (fallback)
 pub fn find_pi() -> Option<String> {
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
@@ -251,26 +339,5 @@ pub fn find_pi() -> Option<String> {
             }
         }
     }
-
-    let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_default();
-    let fnm_multishells = std::path::PathBuf::from(&local_app_data).join("fnm_multishells");
-    if fnm_multishells.exists() {
-        if let Ok(entries) = std::fs::read_dir(&fnm_multishells) {
-            for entry in entries.flatten() {
-                let dir = entry.path();
-                if dir.is_dir() {
-                    let candidate_cmd = dir.join("pi.cmd");
-                    if candidate_cmd.exists() {
-                        return Some(candidate_cmd.to_string_lossy().to_string());
-                    }
-                    let candidate_exe = dir.join("pi.exe");
-                    if candidate_exe.exists() {
-                        return Some(candidate_exe.to_string_lossy().to_string());
-                    }
-                }
-            }
-        }
-    }
-
     None
 }
