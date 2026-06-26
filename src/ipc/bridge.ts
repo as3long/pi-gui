@@ -287,7 +287,33 @@ export async function startEventListeners(): Promise<() => void> {
       }
 
       // Forward extension UI requests to UI store
+      // Filter out unwanted UI requests that cause empty Prompt dialogs
       if (parsed.type === 'extension_ui_request') {
+        const req = parsed as any
+        
+        // Debug: log full UI request to understand what's being sent
+        console.log('[PiGUI] Extension UI request received:', JSON.stringify({
+          method: req.method,
+          title: req.title,
+          message: req.message,
+          options: req.options,
+          status_key: req.status_key,
+          id: req.id
+        }, null, 2))
+        
+        // Skip empty/undesired requests:
+        // 1. No method specified
+        // 2. Status/widget updates (not user prompts)
+        // 3. Only status_key without title/message
+        // 4. Requests with no content at all (empty Prompt dialogs)
+        const skipMethods = ['status', 'widget', 'progress', 'status_update', 'notify']
+        const hasNoUserContent = !req.title && !req.message && !req.options && !req.placeholder && !req.prefill
+        
+        if (!req.method || skipMethods.includes(req.method) || (hasNoUserContent && req.status_key) || hasNoUserContent) {
+          console.log('[PiGUI] Skipping non-interactive UI request')
+          return
+        }
+        
         const uiStore = useUiStore()
         uiStore.setRequest(parsed)
       }

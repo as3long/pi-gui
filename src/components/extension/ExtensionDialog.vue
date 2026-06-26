@@ -107,10 +107,11 @@ function dismissNotify() {
   </Transition>
 
   <!-- Other Dialog Types (with overlay) -->
-  <div v-if="request && !isNotify" class="overlay">
+  <!-- Only show dialog if there's actual content (not empty Prompt) -->
+  <div v-if="request && !isNotify && (request.title || request.message || request.options || request.placeholder || request.prefill)" class="overlay">
     <div class="dialog">
       <!-- Title -->
-      <h3 class="dialog-title">{{ request.title || 'Prompt' }}</h3>
+      <h3 class="dialog-title">{{ request.title || 'User Input Required' }}</h3>
       <p v-if="request.message" class="dialog-message">{{ request.message }}</p>
 
       <!-- Select Dialog -->

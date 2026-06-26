@@ -24,8 +24,6 @@ impl PiRpcClient {
         }
     }
 
-    /// Spawn the `pi --mode rpc` subprocess and start the event reader thread.
-    /// `cwd` is the working directory for pi.
     pub fn spawn(
         &mut self,
         cwd: &str,
@@ -34,7 +32,6 @@ impl PiRpcClient {
         self.spawn_with_model(cwd, app_handle, None)
     }
 
-    /// Spawn pi with an optional --model flag.
     pub fn spawn_with_model(
         &mut self,
         cwd: &str,
@@ -53,13 +50,13 @@ impl PiRpcClient {
 
         eprintln!("[PiGUI] Found pi at: {}", pi_path);
 
-        // Build command directly - no wrapping
+        // ✅ KEEP IT SIMPLE: Direct execution + single flag
+        // No wrappers, no cmd.exe /c, just execute pi.cmd directly
+        // Windows knows how to execute .cmd files
         let mut cmd = Command::new(&pi_path);
         
-        // Common arguments
         cmd.args(["--mode", "rpc", "--no-session"]);
 
-        // Add --model flag if specified
         if let Some(m) = model {
             eprintln!("[PiGUI] Setting model: {}", m);
             cmd.arg("--model").arg(m);
@@ -67,12 +64,10 @@ impl PiRpcClient {
 
         cmd.current_dir(cwd);
 
-        // Windows-specific: hide console window
+        // 🔐 ONLY ONE FLAG - KEEP IT SIMPLE
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
-            // Use ONLY CREATE_NO_WINDOW - this is the most reliable flag
-            // Other flags can sometimes cause unexpected behavior with node.js
             const CREATE_NO_WINDOW: u32 = 0x08000000;
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
@@ -89,6 +84,9 @@ impl PiRpcClient {
                 eprintln!("[PiGUI] {}", error_msg);
                 error_msg
             })?;
+
+        let pid = child.id();
+        eprintln!("[PiGUI] Pi process started with PID: {}", pid);
 
         let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
@@ -119,7 +117,6 @@ impl PiRpcClient {
         Ok(())
     }
 
-    /// Send a JSONL command to the pi subprocess stdin.
     pub fn send_command(&mut self, command: &RpcCommand) -> Result<(), String> {
         let stdin = self.stdin.as_mut().ok_or("pi stdin not available")?;
 
@@ -134,7 +131,6 @@ impl PiRpcClient {
         Ok(())
     }
 
-    /// Send an Extension UI response back to pi.
     pub fn send_extension_ui_response(&mut self, response: &ExtensionUiResponse) -> Result<(), String> {
         let stdin = self.stdin.as_mut().ok_or("pi stdin not available")?;
 
@@ -149,18 +145,14 @@ impl PiRpcClient {
         Ok(())
     }
 
-    /// Check if the pi subprocess is still running.
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Kill the pi subprocess and all its children.
     pub fn kill(&mut self) -> Result<(), String> {
         self.running.store(false, Ordering::SeqCst);
-        // Drop stdin first to signal EOF to the process
         self.stdin = None;
         if let Some(mut process) = self.process.take() {
-            // On Windows, kill entire process tree using taskkill
             #[cfg(target_os = "windows")]
             {
                 use std::process::Stdio;
@@ -172,7 +164,6 @@ impl PiRpcClient {
                     .spawn()
                     .and_then(|mut c| c.wait());
             }
-            // Fallback: kill the main process
             let _ = process.kill();
             let _ = process.wait();
         }
@@ -186,7 +177,6 @@ impl Drop for PiRpcClient {
     }
 }
 
-/// Read JSONL lines from pi's stdout and emit them as Tauri events.
 fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, running: Arc<AtomicBool>) {
     let buf_reader = BufReader::new(reader);
 
@@ -204,10 +194,8 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
             continue;
         }
 
-        // Forward raw JSON line to frontend as a Tauri event
         let _ = app_handle.emit("pi:raw", &line);
 
-        // Quick pattern match on type field to avoid full JSON parsing for high-frequency events
         if line.contains(r#""type":"message_update""#) {
             let _ = app_handle.emit("pi:message_update", &line);
             continue;
@@ -221,7 +209,6 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
             continue;
         }
 
-        // For less frequent events, do full JSON parsing
         if let Ok(event) = serde_json::from_str::<RpcEvent>(&line) {
             let event_name = match &event {
                 RpcEvent::AgentStart => "pi:agent_start",
@@ -251,17 +238,13 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
     let _ = app_handle.emit("pi:process_exit", "");
 }
 
-/// Find the pi binary in PATH or common locations.
 pub fn find_pi() -> Option<String> {
-    // Check PATH first - look for pi.cmd (most common on Windows)
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
-            // Check for pi.cmd on Windows (highest priority)
             let candidate_cmd = dir.join("pi.cmd");
             if candidate_cmd.exists() {
                 return Some(candidate_cmd.to_string_lossy().to_string());
             }
-            // Check for pi.exe
             let candidate_exe = dir.join("pi.exe");
             if candidate_exe.exists() {
                 return Some(candidate_exe.to_string_lossy().to_string());
@@ -269,7 +252,6 @@ pub fn find_pi() -> Option<String> {
         }
     }
 
-    // Check fnm multishells directory (dynamic names)
     let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_default();
     let fnm_multishells = std::path::PathBuf::from(&local_app_data).join("fnm_multishells");
     if fnm_multishells.exists() {
@@ -277,7 +259,6 @@ pub fn find_pi() -> Option<String> {
             for entry in entries.flatten() {
                 let dir = entry.path();
                 if dir.is_dir() {
-                    // Check for pi.cmd first
                     let candidate_cmd = dir.join("pi.cmd");
                     if candidate_cmd.exists() {
                         return Some(candidate_cmd.to_string_lossy().to_string());
@@ -288,24 +269,6 @@ pub fn find_pi() -> Option<String> {
                     }
                 }
             }
-        }
-    }
-
-    // Check common locations
-    let home = std::env::var("USERPROFILE").unwrap_or_default();
-    let common_locations = [
-        // npm global on Unix
-        "/usr/local/bin/pi",
-        "/usr/bin/pi",
-        // fnm/node locations - check .cmd first
-        &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi.cmd", home),
-        &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi", home),
-    ];
-
-    for loc in &common_locations {
-        let path = std::path::Path::new(loc);
-        if path.exists() {
-            return Some(loc.to_string());
         }
     }
 
