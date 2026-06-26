@@ -167,6 +167,7 @@ pub struct SetModelCommand {
     pub r#type: String,
     pub id: String,
     pub provider: String,
+    #[serde(rename = "modelId")]
     pub model_id: String,
 }
 

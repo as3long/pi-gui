@@ -20,7 +20,17 @@ async function applyModel() {
 }
 
 async function refreshModels() {
-  await piGetAvailableModels()
+  console.log('[ModelSelector] Refresh button clicked')
+  try {
+    const models = await piGetAvailableModels()
+    console.log('[ModelSelector] Got models:', models)
+    settingsStore.setAvailableModels(models)
+    console.log('[ModelSelector] Refreshed models:', models.length)
+  } catch (e) {
+    console.error('[ModelSelector] Failed to refresh models:', e)
+    // Show user-friendly error
+    alert(`Failed to refresh models: ${e}`)
+  }
 }
 
 async function changeThinkingLevel(level: string) {

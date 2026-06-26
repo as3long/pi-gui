@@ -272,16 +272,15 @@ pub fn find_pi() -> Option<String> {
         }
     }
 
-    // Check common locations
+    // Check common locations (prefer .cmd on Windows)
+    let home = std::env::var("USERPROFILE").unwrap_or_default();
     let common_locations = [
         // npm global on Unix
         "/usr/local/bin/pi",
         "/usr/bin/pi",
-        // fnm/node locations
-        &format!(
-            r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi",
-            std::env::var("USERPROFILE").unwrap_or_default()
-        ),
+        // fnm/node locations - check .cmd first on Windows
+        &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi.cmd", home),
+        &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi", home),
     ];
 
     for loc in &common_locations {

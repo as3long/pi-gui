@@ -90,9 +90,25 @@ onMounted(async () => {
 
   // Register event handlers for stores
   onPiEvent('*', (event) => {
-    console.log('[PiGUI] Received event:', event.type)
+    if (event.type === 'response') {
+      const resp = event as any
+      console.log('[PiGUI] Response event:', {
+        command: resp.command,
+        success: resp.success,
+        hasData: !!resp.data,
+        dataKeys: resp.data ? Object.keys(resp.data) : []
+      })
+      if (resp.data) {
+        console.log('[PiGUI] Response data:', JSON.stringify(resp.data, null, 2).substring(0, 1500))
+      }
+    } else {
+      console.log('[PiGUI] Received event:', event.type)
+    }
+    console.log('[PiGUI] Calling chatStore.handleEvent...')
     chatStore.handleEvent(event)
+    console.log('[PiGUI] Calling sessionStore.handleEvent...')
     sessionStore.handleEvent(event)
+    console.log('[PiGUI] Event handlers completed')
   })
 
   // Register keyboard shortcuts
@@ -123,9 +139,15 @@ onMounted(async () => {
     // Start periodic stats refresh and do an initial delayed refresh
     // (pi may not have fully initialized stats on first call)
     sessionStore.startStatsRefresh()
-    setTimeout(() => {
-      sessionStore.refreshStats()
-    }, 2000)
+    
+    // Multiple delayed refreshes to ensure we get stats after pi is fully initialized
+    const delays: number[] = [2000, 5000, 10000]
+    delays.forEach((delay: number) => {
+      setTimeout(() => {
+        console.log(`[PiGUI] Triggering stats refresh after ${delay}ms`)
+        sessionStore.refreshStats()
+      }, delay)
+    })
     
     // Lazy-load models in background (slow network call, don't block startup)
     piGetAvailableModels()

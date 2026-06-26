@@ -229,6 +229,14 @@ export async function piGetHomeDir(): Promise<string> {
   return await invoke<string>('pi_get_home_dir')
 }
 
+export async function piInstallPackage(source: string): Promise<any> {
+  return await invoke<any>('pi_install_package', { source })
+}
+
+export async function piListPackages(): Promise<string[]> {
+  return await invoke<string[]>('pi_list_packages')
+}
+
 // ── Event Listeners ──
 
 let unlistenRaw: UnlistenFn | null = null

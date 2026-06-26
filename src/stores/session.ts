@@ -82,18 +82,48 @@ export const useSessionStore = defineStore('session', () => {
   // ── Actions ──
 
   function handleEvent(event: RpcEvent) {
+    console.log('[SessionStore] handleEvent called, type:', event.type)
+    
     if (event.type === 'response') {
       // Support both camelCase and snake_case field names
-      const data = (event as any).data as any
-      const cmd = (event as any).command
+      const response = event as any
+      const data = response.data
+      const cmd = response.command
+      
+      console.log('[SessionStore] Response event - command:', cmd, 'hasData:', !!data)
       
       // Check if this is a stats response
-      if (cmd === 'get_session_stats' && data) {
-        stats.value = data as SessionStats
-        console.log('[SessionStore] Updated stats:', stats.value)
-      } else if (data && 'tokens' in data && 'totalMessages' in data) {
-        stats.value = data as SessionStats
-        console.log('[SessionStore] Updated stats (shape match):', stats.value)
+      if ((cmd === 'get_session_stats' || cmd === 'session_stats') && data) {
+        console.log('[SessionStore] Processing stats response, raw data:', JSON.stringify(data, null, 2))
+        
+        // Data from pi is already in camelCase format, just assign it directly
+        // but provide fallbacks for all fields
+        stats.value = {
+          sessionFile: data.sessionFile ?? data.session_file,
+          sessionId: data.sessionId ?? data.session_id ?? '',
+          userMessages: data.userMessages ?? data.user_messages ?? 0,
+          assistantMessages: data.assistantMessages ?? data.assistant_messages ?? 0,
+          toolCalls: data.toolCalls ?? data.tool_calls ?? 0,
+          toolResults: data.toolResults ?? data.tool_results ?? 0,
+          totalMessages: data.totalMessages ?? data.total_messages ?? 0,
+          tokens: {
+            input: data.tokens?.input ?? 0,
+            output: data.tokens?.output ?? 0,
+            cacheRead: data.tokens?.cacheRead ?? data.tokens?.cache_read ?? 0,
+            cacheWrite: data.tokens?.cacheWrite ?? data.tokens?.cache_write ?? 0,
+            total: data.tokens?.total ?? 0,
+          },
+          cost: data.cost ?? 0,
+          contextUsage: {
+            tokens: data.contextUsage?.tokens ?? 0,
+            contextWindow: data.contextUsage?.contextWindow ?? data.contextUsage?.context_window ?? 0,
+            percent: data.contextUsage?.percent ?? 0,
+          },
+        }
+        
+        console.log('[SessionStore] Updated stats.value:', stats.value)
+        console.log('[SessionStore] tokens.input:', stats.value?.tokens?.input)
+        console.log('[SessionStore] contextUsage.percent:', stats.value?.contextUsage?.percent)
       }
 
       // Handle available models response
@@ -132,25 +162,58 @@ export const useSessionStore = defineStore('session', () => {
         }
       }
 
-      // Handle UI state response
-      if (data && 'sessionId' in data) {
-        currentSessionId.value = data.sessionId
-        currentSessionFile.value = data.sessionFile || (data as any).sessionFile
-        sessionName.value = data.sessionName || (data as any).sessionName
-        if (data.model) {
-          currentModel.value = data.model
-        }
-        thinkingLevel.value = (data.thinkingLevel || (data as any).thinking_level) as ThinkingLevel
-        steeringMode.value = (data.steeringMode || (data as any).steering_mode) as QueueMode
-        followUpMode.value = (data.followUpMode || (data as any).follow_up_mode) as QueueMode
+      // Handle UI state response - also check for stats embedded in state response
+      if (data) {
+        if ('sessionId' in data || 'session_id' in data) {
+          currentSessionId.value = data.sessionId || data.session_id
+          currentSessionFile.value = data.sessionFile || data.session_file
+          sessionName.value = data.sessionName || data.session_name
+          if (data.model) {
+            currentModel.value = data.model
+          }
+          thinkingLevel.value = (data.thinkingLevel || data.thinking_level) as ThinkingLevel
+          steeringMode.value = (data.steeringMode || data.steering_mode) as QueueMode
+          followUpMode.value = (data.followUpMode || data.follow_up_mode) as QueueMode
 
-        // Update session status based on streaming state
-        if (data.isStreaming) {
-          sessionStatus.value = 'running'
-        } else if (data.isCompacting) {
-          sessionStatus.value = 'running'
-        } else {
-          sessionStatus.value = 'idle'
+          // Update session status based on streaming state
+          if (data.isStreaming || data.is_streaming) {
+            sessionStatus.value = 'running'
+          } else if (data.isCompacting || data.is_compacting) {
+            sessionStatus.value = 'running'
+          } else {
+            sessionStatus.value = 'idle'
+          }
+        }
+
+        // Also extract stats from state response if present
+        if ((cmd === 'get_state' || !cmd) && ('stats' in data || 'stats' in (data.state || {}))) {
+          const statsData = data.stats || data.state?.stats
+          if (statsData && !stats.value) {
+            console.log('[SessionStore] Found stats in state response:', statsData)
+            stats.value = {
+              sessionFile: statsData.sessionFile ?? statsData.session_file,
+              sessionId: statsData.sessionId ?? statsData.session_id ?? '',
+              userMessages: statsData.userMessages ?? statsData.user_messages ?? 0,
+              assistantMessages: statsData.assistantMessages ?? statsData.assistant_messages ?? 0,
+              toolCalls: statsData.toolCalls ?? statsData.tool_calls ?? 0,
+              toolResults: statsData.toolResults ?? statsData.tool_results ?? 0,
+              totalMessages: statsData.totalMessages ?? statsData.total_messages ?? 0,
+              tokens: {
+                input: statsData.tokens?.input ?? 0,
+                output: statsData.tokens?.output ?? 0,
+                cacheRead: statsData.tokens?.cacheRead ?? statsData.tokens?.cache_read ?? 0,
+                cacheWrite: statsData.tokens?.cacheWrite ?? statsData.tokens?.cache_write ?? 0,
+                total: statsData.tokens?.total ?? 0,
+              },
+              cost: statsData.cost ?? 0,
+              contextUsage: {
+                tokens: statsData.contextUsage?.tokens ?? 0,
+                contextWindow: statsData.contextUsage?.contextWindow ?? statsData.contextUsage?.context_window ?? 0,
+                percent: statsData.contextUsage?.percent ?? 0,
+              },
+            }
+            console.log('[SessionStore] Updated stats from state:', stats.value)
+          }
         }
       }
     }

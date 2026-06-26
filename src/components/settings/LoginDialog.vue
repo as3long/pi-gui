@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { piGetAgentAuth, piSetAgentAuth, piGetAgentSettings } from '../../ipc/bridge'
+import { piGetAgentAuth, piSetAgentAuth, piGetAgentSettings, piListPackages, piInstallPackage } from '../../ipc/bridge'
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -12,6 +12,8 @@ const providerSearch = ref('')
 
 const authData = ref<Record<string, { type: string; key: string }>>({})
 const agentSettings = ref<Record<string, unknown>>({})
+const installedPackages = ref<string[]>([])
+const isInstalling = ref(false)
 
 const knownProviders = [
   'openai', 'anthropic', 'google', 'mistral', 'deepseek', 'xai',
@@ -35,17 +37,41 @@ const existingProviders = computed(() => Object.keys(authData.value))
 async function loadConfig() {
   isLoading.value = true
   try {
-    const [auth, settings] = await Promise.all([
+    const [auth, settings, packages] = await Promise.all([
       piGetAgentAuth(),
       piGetAgentSettings(),
+      piListPackages(),
     ])
     authData.value = auth
     agentSettings.value = settings as Record<string, unknown>
+    installedPackages.value = packages
   } catch (e) {
     console.error('Failed to load config:', e)
   } finally {
     isLoading.value = false
   }
+}
+
+async function installVolcengineProvider() {
+  if (isInstalling.value) return
+  isInstalling.value = true
+  try {
+    await piInstallPackage('npm:pi-volcengine-provider')
+    // Refresh package list after installation
+    installedPackages.value = await piListPackages()
+    alert('pi-volcengine-provider installed successfully!')
+  } catch (e) {
+    console.error('Failed to install pi-volcengine-provider:', e)
+    alert(`Failed to install: ${e}`)
+  } finally {
+    isInstalling.value = false
+  }
+}
+
+function isVolcengineProviderInstalled(): boolean {
+  return installedPackages.value.some(p => 
+    p.includes('volcengine') || p.includes('pi-volcengine-provider')
+  )
 }
 
 async function saveAuth() {
@@ -140,6 +166,19 @@ onMounted(() => {
             {{ existingProviders.includes(selectedProvider) ? 'Update' : 'Add' }} API Key
           </h3>
           <div class="provider-name">{{ providerInfo[selectedProvider]?.name || selectedProvider }}</div>
+
+          <!-- Volcengine provider installation check -->
+          <div v-if="selectedProvider === 'volcengine' && !isVolcengineProviderInstalled()" class="provider-hint warning">
+            <p>⚠️ <strong>pi-volcengine-provider 未安装</strong></p>
+            <p>为了使用火山引擎，请先安装 provider 包：</p>
+            <button
+              class="btn btn-primary install-btn"
+              @click="installVolcengineProvider"
+              :disabled="isInstalling"
+            >
+              {{ isInstalling ? '⏳ 安装中...' : '📦 安装 pi-volcengine-provider' }}
+            </button>
+          </div>
 
           <div class="form-group">
             <label class="form-label">Key Type</label>
@@ -396,6 +435,11 @@ select.form-input {
   line-height: 1.6;
 }
 
+.provider-hint.warning {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
 .provider-hint p {
   margin: 0 0 8px;
   color: var(--text-color);
@@ -418,6 +462,12 @@ select.form-input {
   font-family: 'SF Mono', monospace;
   font-size: 0.9em;
   color: var(--accent-color);
+}
+
+.install-btn {
+  width: 100%;
+  margin-top: 8px;
+  justify-content: center;
 }
 
 .btn {

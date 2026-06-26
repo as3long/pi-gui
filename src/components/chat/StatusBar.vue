@@ -35,13 +35,13 @@ const contextDisplay = computed(() => {
 </script>
 
 <template>
-  <div class="status-bar" v-if="sessionStore.stats">
+  <div class="status-bar">
     <span class="stat" title="Input tokens">↑{{ formatTokens(input) }}</span>
     <span class="stat" title="Output tokens">↓{{ formatTokens(output) }}</span>
     <span class="stat" title="Total tokens">R{{ formatTokens(total) }}</span>
     <span class="stat" title="Context usage">CH{{ contextPercent.toFixed(1) }}%</span>
     <span class="stat" title="Cost">{{ formatCost(cost) }}</span>
-    <span class="stat" title="Context window">{{ contextDisplay }}</span>
+    <span class="stat" title="Context window">{{ contextDisplay || 'N/A' }}</span>
     <span class="stat cwd" :title="`Working Directory: ${cwd}`">📂 {{ cwd || 'Not set' }}</span>
     <span class="stat thinking" :title="`Thinking: ${thinkingLevel}`">({{ thinkingLevel }})</span>
   </div>
