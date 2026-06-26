@@ -16,8 +16,13 @@ const agentSettings = ref<Record<string, unknown>>({})
 const knownProviders = [
   'openai', 'anthropic', 'google', 'mistral', 'deepseek', 'xai',
   'groq', 'cohere', 'together', 'fireworks', 'replicate',
-  'azure_openai', 'bedrock', 'vertex', 'openrouter', 'custom',
+  'azure_openai', 'bedrock', 'vertex', 'openrouter', 'volcengine', 'custom',
 ]
+
+// Display names and descriptions for providers
+const providerInfo: Record<string, { name: string; desc?: string }> = {
+  volcengine: { name: 'Volcengine (火山引擎)', desc: 'ByteDance AI - 豆包大模型' },
+}
 
 const filteredProviders = computed(() => {
   const q = providerSearch.value.toLowerCase()
@@ -122,7 +127,8 @@ onMounted(() => {
               :class="{ active: selectedProvider === provider, configured: existingProviders.includes(provider) }"
               @click="selectProvider(provider)"
             >
-              {{ provider }}
+              {{ providerInfo[provider]?.name || provider }}
+              <span v-if="providerInfo[provider]?.desc" class="provider-desc">{{ providerInfo[provider].desc }}</span>
               <span v-if="existingProviders.includes(provider)" class="check">✓</span>
             </button>
           </div>
@@ -133,7 +139,7 @@ onMounted(() => {
           <h3 class="section-title">
             {{ existingProviders.includes(selectedProvider) ? 'Update' : 'Add' }} API Key
           </h3>
-          <div class="provider-name">{{ selectedProvider }}</div>
+          <div class="provider-name">{{ providerInfo[selectedProvider]?.name || selectedProvider }}</div>
 
           <div class="form-group">
             <label class="form-label">Key Type</label>
@@ -153,6 +159,16 @@ onMounted(() => {
               placeholder="Enter your API key..."
               @keyup.enter="saveAuth"
             />
+          </div>
+
+          <!-- Volcengine hint -->
+          <div v-if="selectedProvider === 'volcengine'" class="provider-hint">
+            <p>📌 <strong>火山引擎</strong> 配置说明：</p>
+            <ul>
+              <li>API Key: 在火山引擎控制台获取</li>
+              <li>模型 ID 使用 endpoint ID (ep-xxxxx)</li>
+              <li>Base URL: <code>https://ark.cn-beijing.volces.com/api/v3</code></li>
+            </ul>
           </div>
 
           <div class="btn-row">
@@ -301,6 +317,18 @@ onMounted(() => {
   border-color: var(--success-color);
 }
 
+.provider-desc {
+  display: block;
+  font-size: 0.65em;
+  color: var(--muted-color);
+  margin-top: 2px;
+  line-height: 1.2;
+}
+
+.provider-btn.active .provider-desc {
+  color: rgba(255, 255, 255, 0.8);
+}
+
 .check {
   position: absolute;
   top: 2px;
@@ -356,6 +384,40 @@ select.form-input {
   display: flex;
   gap: 8px;
   margin-top: 16px;
+}
+
+.provider-hint {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--badge-bg);
+  border-radius: 6px;
+  border-left: 3px solid var(--accent-color);
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+.provider-hint p {
+  margin: 0 0 8px;
+  color: var(--text-color);
+}
+
+.provider-hint ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.provider-hint li {
+  color: var(--muted-color);
+  margin-bottom: 4px;
+}
+
+.provider-hint code {
+  background: var(--code-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'SF Mono', monospace;
+  font-size: 0.9em;
+  color: var(--accent-color);
 }
 
 .btn {
