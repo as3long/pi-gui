@@ -7,14 +7,6 @@ use tauri::{AppHandle, Emitter};
 
 use super::protocol::*;
 
-/// Type of pi executable found
-enum PiExecutable {
-    /// Direct executable (pi.exe or pi)
-    Exe(String),
-    /// Node.js script (parsed from pi.cmd)
-    NodeScript { node_path: String, script_path: String },
-}
-
 /// Manages the pi --mode rpc subprocess lifecycle and JSONL communication.
 #[derive(Default)]
 pub struct PiRpcClient {
@@ -53,29 +45,17 @@ impl PiRpcClient {
             return Err("pi is already running".into());
         }
 
-        let pi_executable = find_pi_executable().ok_or_else(|| {
+        let pi_path = find_pi().ok_or_else(|| {
             let error_msg = "pi not found. Please ensure pi-coding-agent is installed and available in PATH.";
             eprintln!("[PiGUI] {}", error_msg);
             error_msg.to_string()
         })?;
 
-        eprintln!("[PiGUI] Found pi executable: {:?}", match &pi_executable {
-            PiExecutable::Exe(p) => format!("exe: {}", p),
-            PiExecutable::NodeScript { node_path, script_path } => format!("node: {} script: {}", node_path, script_path),
-        });
+        eprintln!("[PiGUI] Found pi at: {}", pi_path);
 
-        // Build command based on executable type
-        let mut cmd: Command;
-        match &pi_executable {
-            PiExecutable::Exe(path) => {
-                cmd = Command::new(path);
-            }
-            PiExecutable::NodeScript { node_path, script_path } => {
-                cmd = Command::new(node_path);
-                cmd.arg(script_path);
-            }
-        }
-
+        // Build command directly - no wrapping
+        let mut cmd = Command::new(&pi_path);
+        
         // Common arguments
         cmd.args(["--mode", "rpc", "--no-session"]);
 
@@ -87,18 +67,14 @@ impl PiRpcClient {
 
         cmd.current_dir(cwd);
 
-        // Windows-specific: hide console window using multiple flags
+        // Windows-specific: hide console window
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
-            // CREATE_NO_WINDOW: don't create a console for this process
-            // CREATE_NEW_PROCESS_GROUP: create a new process group
-            // DETACHED_PROCESS: detach from console completely
+            // Use ONLY CREATE_NO_WINDOW - this is the most reliable flag
+            // Other flags can sometimes cause unexpected behavior with node.js
             const CREATE_NO_WINDOW: u32 = 0x08000000;
-            const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-            const DETACHED_PROCESS: u32 = 0x00000008;
-            let flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS;
-            cmd.creation_flags(flags);
+            cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
         eprintln!("[PiGUI] Spawning pi process...");
@@ -178,12 +154,25 @@ impl PiRpcClient {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Kill the pi subprocess.
+    /// Kill the pi subprocess and all its children.
     pub fn kill(&mut self) -> Result<(), String> {
         self.running.store(false, Ordering::SeqCst);
         // Drop stdin first to signal EOF to the process
         self.stdin = None;
         if let Some(mut process) = self.process.take() {
+            // On Windows, kill entire process tree using taskkill
+            #[cfg(target_os = "windows")]
+            {
+                use std::process::Stdio;
+                let pid = process.id();
+                let _ = Command::new("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .and_then(|mut c| c.wait());
+            }
+            // Fallback: kill the main process
             let _ = process.kill();
             let _ = process.wait();
         }
@@ -262,25 +251,20 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
     let _ = app_handle.emit("pi:process_exit", "");
 }
 
-/// Find the pi executable in PATH or common locations.
-/// Returns a PiExecutable enum indicating how to run pi.
-fn find_pi_executable() -> Option<PiExecutable> {
-    // Check PATH first
+/// Find the pi binary in PATH or common locations.
+pub fn find_pi() -> Option<String> {
+    // Check PATH first - look for pi.cmd (most common on Windows)
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
-            // Check for pi.exe on Windows (highest priority)
-            let candidate_exe = dir.join("pi.exe");
-            if candidate_exe.exists() {
-                return Some(PiExecutable::Exe(candidate_exe.to_string_lossy().to_string()));
-            }
-            // Check for pi.cmd on Windows - parse it to find node script
+            // Check for pi.cmd on Windows (highest priority)
             let candidate_cmd = dir.join("pi.cmd");
             if candidate_cmd.exists() {
-                if let Some(script) = parse_cmd_to_find_node_script(&candidate_cmd) {
-                    return Some(script);
-                }
-                // Fallback to running .cmd directly if parsing fails
-                return Some(PiExecutable::Exe(candidate_cmd.to_string_lossy().to_string()));
+                return Some(candidate_cmd.to_string_lossy().to_string());
+            }
+            // Check for pi.exe
+            let candidate_exe = dir.join("pi.exe");
+            if candidate_exe.exists() {
+                return Some(candidate_exe.to_string_lossy().to_string());
             }
         }
     }
@@ -293,18 +277,14 @@ fn find_pi_executable() -> Option<PiExecutable> {
             for entry in entries.flatten() {
                 let dir = entry.path();
                 if dir.is_dir() {
-                    // Check for pi.exe first
-                    let candidate_exe = dir.join("pi.exe");
-                    if candidate_exe.exists() {
-                        return Some(PiExecutable::Exe(candidate_exe.to_string_lossy().to_string()));
-                    }
-                    // Check for pi.cmd and parse it
+                    // Check for pi.cmd first
                     let candidate_cmd = dir.join("pi.cmd");
                     if candidate_cmd.exists() {
-                        if let Some(script) = parse_cmd_to_find_node_script(&candidate_cmd) {
-                            return Some(script);
-                        }
-                        return Some(PiExecutable::Exe(candidate_cmd.to_string_lossy().to_string()));
+                        return Some(candidate_cmd.to_string_lossy().to_string());
+                    }
+                    let candidate_exe = dir.join("pi.exe");
+                    if candidate_exe.exists() {
+                        return Some(candidate_exe.to_string_lossy().to_string());
                     }
                 }
             }
@@ -317,90 +297,15 @@ fn find_pi_executable() -> Option<PiExecutable> {
         // npm global on Unix
         "/usr/local/bin/pi",
         "/usr/bin/pi",
-        // fnm/node locations on Windows
+        // fnm/node locations - check .cmd first
         &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi.cmd", home),
+        &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi", home),
     ];
 
     for loc in &common_locations {
         let path = std::path::Path::new(loc);
         if path.exists() {
-            if loc.ends_with(".cmd") {
-                if let Some(script) = parse_cmd_to_find_node_script(path) {
-                    return Some(script);
-                }
-            }
-            return Some(PiExecutable::Exe(loc.to_string()));
-        }
-    }
-
-    None
-}
-
-/// Parse a .cmd file to find the node.js script path.
-/// Returns a NodeScript enum variant if successful.
-fn parse_cmd_to_find_node_script(cmd_path: &std::path::Path) -> Option<PiExecutable> {
-    // Read the cmd file
-    let content = match std::fs::read_to_string(cmd_path) {
-        Ok(c) => c,
-        Err(_) => return None,
-    };
-
-    // Look for node.exe in the same directory first
-    let parent_dir = cmd_path.parent()?;
-
-    // Check if node.exe exists in the same directory
-    let node_path = parent_dir.join("node.exe");
-    if !node_path.exists() {
-        // If not, try to find node.exe in PATH
-        if let Ok(path) = std::env::var("PATH") {
-            for dir in std::env::split_paths(&path) {
-                let candidate = dir.join("node.exe");
-                if candidate.exists() {
-                    return find_cli_js(&content, candidate.to_string_lossy().to_string());
-                }
-            }
-        }
-        return None;
-    }
-
-    find_cli_js(&content, node_path.to_string_lossy().to_string())
-}
-
-/// Find the CLI .js path in the cmd file content (without regex)
-fn find_cli_js(content: &str, node_path: String) -> Option<PiExecutable> {
-    // Look for "node_modules" and "cli.js" in the same line
-    for line in content.lines() {
-        if line.contains("node_modules") && line.contains("cli.js") {
-            // Extract the path between node_modules and cli.js (inclusive)
-            if let Some(start) = line.find("node_modules") {
-                if let Some(end) = line.find("cli.js") {
-                    let script_rel = &line[start..end + 6]; // +6 for "cli.js"
-                    
-                    // Clean up quotes and spaces
-                    let script_rel = script_rel.trim_matches('"').trim_matches('\'').trim();
-                    
-                    // Try to find the script relative to node.exe location
-                    let node_path_buf = std::path::Path::new(&node_path);
-                    let script_path = node_path_buf.parent()?.join(script_rel);
-                    if script_path.exists() {
-                        return Some(PiExecutable::NodeScript {
-                            node_path: node_path.clone(),
-                            script_path: script_path.to_string_lossy().to_string(),
-                        });
-                    }
-
-                    // Try relative to node_modules sibling
-                    if let Some(parent) = node_path_buf.parent() {
-                        let script_path = parent.join(script_rel);
-                        if script_path.exists() {
-                            return Some(PiExecutable::NodeScript {
-                                node_path,
-                                script_path: script_path.to_string_lossy().to_string(),
-                            });
-                        }
-                    }
-                }
-            }
+            return Some(loc.to_string());
         }
     }
 
