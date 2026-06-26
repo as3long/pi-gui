@@ -54,42 +54,54 @@ impl PiRpcClient {
         eprintln!("[PiGUI] Found pi at: {}", pi_path);
 
         // Build command
-        let mut cmd = Command::new(&pi_path);
-        let mut args = vec!["--mode", "rpc", "--no-session"];
+        let mut cmd: Command;
+        let args = vec!["--mode", "rpc", "--no-session"];
 
-        // Add --model flag if specified
-        if let Some(m) = model {
-            eprintln!("[PiGUI] Setting model: {}", m);
-            args.push("--model");
-            args.push(m);
-        }
-
-        // If pi is a .ps1 file, use powershell.exe to run it
-        if pi_path.ends_with(".ps1") {
-            eprintln!("[PiGUI] Using PowerShell to run .ps1 script");
-            let mut ps_args = vec!["-ExecutionPolicy", "Bypass", "-File", &pi_path];
-            ps_args.extend_from_slice(&args);
-            cmd = Command::new("powershell.exe");
-            args = ps_args;
-        }
-
-        eprintln!("[PiGUI] Spawning pi with args: {:?}", args);
-
-        // Windows-specific: hide console window
+        // Windows-specific: handle .cmd, .bat, .ps1 files properly to avoid console windows
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
             // CREATE_NO_WINDOW: don't create a console for this process
-            // CREATE_NEW_PROCESS_GROUP: create a new process group so child processes
-            // (like node.exe spawned by .cmd) don't attach to our console
+            // CREATE_NEW_PROCESS_GROUP: create a new process group so child processes don't attach to our console
             const CREATE_NO_WINDOW: u32 = 0x08000000;
             const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+
+            if pi_path.ends_with(".cmd") || pi_path.ends_with(".bat") {
+                // For batch files, use cmd.exe /c with proper flags BEFORE adding args
+                eprintln!("[PiGUI] Using cmd.exe to run batch file: {}", pi_path);
+                cmd = Command::new("cmd.exe");
+                cmd.arg("/c").arg(&pi_path);
+            } else if pi_path.ends_with(".ps1") {
+                eprintln!("[PiGUI] Using PowerShell to run .ps1 script: {}", pi_path);
+                cmd = Command::new("powershell.exe");
+                cmd.args(["-ExecutionPolicy", "Bypass", "-File", &pi_path]);
+            } else {
+                cmd = Command::new(&pi_path);
+            }
+
+            // Apply creation flags BEFORE spawning
             let flags = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP;
             cmd.creation_flags(flags);
         }
 
+        // Non-Windows: just run the command directly
+        #[cfg(not(target_os = "windows"))]
+        {
+            cmd = Command::new(&pi_path);
+        }
+
+        // Add common arguments
+        cmd.args(&args);
+
+        // Add --model flag if specified
+        if let Some(m) = model {
+            eprintln!("[PiGUI] Setting model: {}", m);
+            cmd.arg("--model").arg(m);
+        }
+
+        eprintln!("[PiGUI] Spawning pi process");
+
         let mut child = cmd
-            .args(&args)
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

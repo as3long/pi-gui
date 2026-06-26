@@ -243,31 +243,49 @@ let unlistenRaw: UnlistenFn | null = null
 const eventHandlers: Map<string, Array<(event: RpcEvent) => void>> = new Map()
 
 /**
+ * Fast lightweight JSON parsing for high-frequency streaming events
+ * Only parses the 'type' field using string operations to avoid full JSON parsing
+ */
+function fastParseEventType(payload: string): string {
+  const typeMatch = payload.match(/"type"\s*:\s*"([^"]+)"/)
+  return typeMatch ? typeMatch[1] : ''
+}
+
+/**
  * Start listening to pi events from the Rust backend.
  * Returns a cleanup function.
  */
 export async function startEventListeners(): Promise<() => void> {
   console.log('[PiGUI] Starting event listeners...')
-  console.log('[PiGUI] Current event handlers:', eventHandlers.size)
   // Listen to raw JSON lines
   unlistenRaw = await listen<string>('pi:raw', (event) => {
-    console.log('[PiGUI] Raw event received:', event.payload?.substring(0, 100))
+    const payload = event.payload
+    if (!payload) return
+
+    // Fast path: extract event type without full JSON parsing
+    const eventType = fastParseEventType(payload)
+    
+    // Check if we have any handlers for this event type
+    const specificHandlers = eventHandlers.get(eventType) || []
+    const wildcardHandlers = eventHandlers.get('*') || []
+    
+    // Only do full JSON parsing if we have actual handlers
+    if (specificHandlers.length === 0 && wildcardHandlers.length === 0 && eventType !== 'extension_ui_request') {
+      return
+    }
+
     try {
-      const parsed = JSON.parse(event.payload) as RpcEvent
-      console.log('[PiGUI] Parsed event type:', parsed.type)
-      const handlers = eventHandlers.get(parsed.type) || []
-      console.log('[PiGUI] Handlers for', parsed.type, ':', handlers.length)
-      for (const handler of handlers) {
-        console.log('[PiGUI] Calling handler for:', parsed.type)
+      // Full parsing only when needed
+      const parsed = JSON.parse(payload) as RpcEvent
+
+      for (const handler of specificHandlers) {
         handler(parsed)
       }
-      // Also notify wildcard handlers
-      const wildcardHandlers = eventHandlers.get('*') || []
-      console.log('[PiGUI] Wildcard handlers:', wildcardHandlers.length)
+
       for (const handler of wildcardHandlers) {
-        console.log('[PiGUI] Calling wildcard handler for:', parsed.type)
         handler(parsed)
       }
+
       // Forward extension UI requests to UI store
       if (parsed.type === 'extension_ui_request') {
         const uiStore = useUiStore()
