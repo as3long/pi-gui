@@ -254,13 +254,13 @@ export default function (pi: ExtensionAPI) {
         const rawWeather = await fetchWeather(city, false, false);
         const formattedResponse = formatWeatherResponse(rawWeather, city, false, false);
         
-        // Display result as a long-lasting notification
-        ctx.ui.notify(formattedResponse, "info");
+        // Display result in chat
+        pi.sendMessage({ customType: "weather-result", content: formattedResponse, display: true });
         
         ctx.ui.setStatus("weather", "");
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        ctx.ui.notify(`❌ 无法获取 ${city} 的天气信息: ${errorMessage}`, "error");
+        pi.sendMessage({ customType: "weather-error", content: `❌ 无法获取 ${city} 的天气信息: ${errorMessage}`, display: true });
         ctx.ui.setStatus("weather", "");
       }
     },

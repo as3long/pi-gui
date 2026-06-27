@@ -430,9 +430,9 @@ export const useChatStore = defineStore('chat', () => {
 
       case 'message_end': {
         const endMsg = (event as any).message
-        console.log('[ChatStore] Message end, role:', endMsg?.role, 'content:', Array.isArray(endMsg?.content) ? endMsg.content.length : 0, 'items')
+        console.log('[ChatStore] Message end, role:', endMsg?.role, 'customType:', endMsg?.customType)
         
-        // Capture the full message content if available
+        // Handle assistant messages (streaming finalize)
         if (endMsg?.role === 'assistant' && Array.isArray(endMsg.content)) {
           // Update streaming message with final content
           for (const c of endMsg.content) {
@@ -455,6 +455,21 @@ export const useChatStore = defineStore('chat', () => {
           // Finalize this message (add to messages array)
           console.log('[ChatStore] Finalizing from message_end')
           finalizeStreaming()
+        }
+        // Handle custom messages from extensions (e.g., weather results)
+        else if (endMsg?.customType && endMsg?.content) {
+          console.log('[ChatStore] Adding custom message:', endMsg.customType)
+          const text = typeof endMsg.content === 'string' 
+            ? endMsg.content 
+            : Array.isArray(endMsg.content) 
+              ? endMsg.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n')
+              : ''
+          if (text) {
+            messages.value = [...messages.value, {
+              role: 'assistant',
+              content: [{ type: 'text', text }],
+            }]
+          }
         }
         break
       }
