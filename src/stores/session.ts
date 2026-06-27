@@ -191,6 +191,7 @@ export const useSessionStore = defineStore('session', () => {
       
       // Handle set_model response - update current model
       if (cmd === 'set_model' && data) {
+        console.log('[SessionStore] set_model response:', JSON.stringify(data))
         if (data.model) {
           currentModel.value = data.model
           console.log('[SessionStore] Updated model from set_model response:', data.model)
@@ -207,18 +208,37 @@ export const useSessionStore = defineStore('session', () => {
             maxTokens: 0,
           }
           console.log('[SessionStore] Constructed model from set_model response:', data.provider, data.modelId)
+        } else {
+          // Fallback: use settings store values
+          const settingsStore = useSettingsStore()
+          if (settingsStore.provider && settingsStore.modelId) {
+            currentModel.value = {
+              id: settingsStore.modelId,
+              name: settingsStore.modelId,
+              provider: settingsStore.provider,
+              api: '',
+              baseUrl: '',
+              reasoning: false,
+              contextWindow: 0,
+              maxTokens: 0,
+            }
+            console.log('[SessionStore] Used settings store for model:', settingsStore.provider, settingsStore.modelId)
+          }
         }
       }
 
       // Handle UI state response - also check for stats embedded in state response
       if (data) {
+        // Always update model if present in response
+        if (data.model) {
+          currentModel.value = data.model
+          console.log('[SessionStore] Updated model from state response:', data.model)
+        }
+        
         if ('sessionId' in data || 'session_id' in data) {
           currentSessionId.value = data.sessionId || data.session_id
           currentSessionFile.value = data.sessionFile || data.session_file
           sessionName.value = data.sessionName || data.session_name
-          if (data.model) {
-            currentModel.value = data.model
-          }
           thinkingLevel.value = (data.thinkingLevel || data.thinking_level) as ThinkingLevel
           steeringMode.value = (data.steeringMode || data.steering_mode) as QueueMode
           followUpMode.value = (data.followUpMode || data.follow_up_mode) as QueueMode
