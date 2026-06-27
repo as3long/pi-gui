@@ -88,7 +88,10 @@ export const useChatStore = defineStore('chat', () => {
   // ── Actions ──
 
   function addMessage(msg: AgentMessage) {
-    messages.value = [...messages.value, msg]
+    console.log('[ChatStore] addMessage called, role:', msg.role)
+    const newMsgs = [...messages.value, msg]
+    messages.value = newMsgs
+    console.log('[ChatStore] messages count after add:', messages.value.length)
   }
 
   function flushBufferedStreaming() {
