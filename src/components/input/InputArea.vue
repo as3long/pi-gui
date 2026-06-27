@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useChatStore } from '../../stores/chat'
+import { useSessionStore } from '../../stores/session'
 import { piPromptWithImages } from '../../ipc/bridge'
 import type { ImageContent } from '../../ipc/types'
 
@@ -14,6 +15,7 @@ defineProps<{
 }>()
 
 const chatStore = useChatStore()
+const sessionStore = useSessionStore()
 const inputText = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 
@@ -119,9 +121,9 @@ defineExpose({ focusInput })
       />
 
       <div class="input-actions">
-        <!-- Abort button (shown during streaming) -->
+        <!-- Abort button (shown during streaming or when agent is running) -->
         <button
-          v-if="chatStore.isStreaming"
+          v-if="chatStore.isStreaming || sessionStore.sessionStatus === 'running'"
           class="action-btn abort-btn"
           title="Abort current operation"
           @click="handleAbort"

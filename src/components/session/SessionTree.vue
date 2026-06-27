@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
 import { ask } from '@tauri-apps/plugin-dialog'
 import { piNewSession, piSwitchSession, piFork, piReadSession, piReadDirectory, piGetHomeDir, piDeleteFile, piGetSessionStats } from '../../ipc/bridge'
+import WorkspaceSelector from '../workspace/WorkspaceSelector.vue'
 
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
@@ -369,6 +370,11 @@ onMounted(() => {
       </button>
     </div>
 
+    <!-- Workspace Selector -->
+    <div class="workspace-wrapper">
+      <WorkspaceSelector />
+    </div>
+
     <!-- Search and Actions -->
     <div class="search-wrapper">
       <input
@@ -582,6 +588,11 @@ onMounted(() => {
   flex-shrink: 0;
   white-space: nowrap;
   opacity: 0.6;
+}
+
+.workspace-wrapper {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
 }
 
 .search-wrapper {

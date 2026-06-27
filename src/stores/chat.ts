@@ -149,8 +149,7 @@ export const useChatStore = defineStore('chat', () => {
         break
       }
       case 'toolcall_delta': {
-        // Flush buffer immediately for structural changes
-        flushBufferedStreaming()
+        // Don't flush buffer immediately - batch these updates to reduce UI churn
         const tc = msgEvent.tool_call as { id?: string; arguments?: string } | undefined
         if (tc?.id) {
           const existing = streamingMessage.value.toolCalls.find((t) => t.id === tc.id)
@@ -306,12 +305,52 @@ export const useChatStore = defineStore('chat', () => {
       clearTimeout(saveTimeout)
       saveTimeout = null
     }
+    // Stop streaming and cleanup
+    isStreaming.value = false
+    isCompacting.value = false
+    stopStreamingWatchdog()
     localStorage.removeItem('pi-gui:messages')
   }
 
   // ── Event Handlers ──
 
+  // ── Streaming Watchdog ──
+  let streamingWatchdogTimer: ReturnType<typeof setTimeout> | null = null
+  let streamingLastActivity = Date.now()
+
+  function startStreamingWatchdog() {
+    streamingLastActivity = Date.now()
+    if (streamingWatchdogTimer) {
+      clearTimeout(streamingWatchdogTimer)
+    }
+    // Check every 30 seconds
+    streamingWatchdogTimer = setTimeout(() => {
+      const inactiveTime = (Date.now() - streamingLastActivity) / 1000
+      if (inactiveTime > 120 && isStreaming.value) {
+        console.warn('[ChatStore] No streaming activity for 120s - UI may be unresponsive')
+        // Force allow abort by keeping isStreaming true
+      }
+    }, 30000)
+  }
+
+  function resetStreamingWatchdog() {
+    streamingLastActivity = Date.now()
+  }
+
+  function stopStreamingWatchdog() {
+    if (streamingWatchdogTimer) {
+      clearTimeout(streamingWatchdogTimer)
+      streamingWatchdogTimer = null
+    }
+  }
+
   function handleEvent(event: RpcEvent) {
+    // Reset watchdog on any streaming event
+    if (event.type === 'message_update' || event.type === 'tool_execution_start' || 
+        event.type === 'tool_execution_update' || event.type === 'tool_execution_end') {
+      resetStreamingWatchdog()
+    }
+
     switch (event.type) {
       case 'agent_start':
         isStreaming.value = true
@@ -328,10 +367,13 @@ export const useChatStore = defineStore('chat', () => {
           toolCalls: [],
           isComplete: false,
         }
+        // Start watchdog - if no activity for 120s, allow abort
+        startStreamingWatchdog()
         break
 
       case 'agent_end': {
         console.log('[ChatStore] Agent ended, finalizing...')
+        stopStreamingWatchdog()
         // Use agent_end messages as fallback for tool calls
         const agentMsgs = (event as any).messages
         if (Array.isArray(agentMsgs)) {

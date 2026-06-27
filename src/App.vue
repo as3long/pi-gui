@@ -8,7 +8,7 @@ import LoginDialog from './components/settings/LoginDialog.vue'
 import ExtensionDialog from './components/extension/ExtensionDialog.vue'
 import SessionTree from './components/session/SessionTree.vue'
 import { FileTree } from './components/files'
-import { startEventListeners, clearEventHandlers, onPiEvent, piNewSession, piCycleModel, piStart, piGetState, piReadDirectory, piIsRunning, piDeleteFile, piGetAvailableModels, piGetSessionStats } from './ipc/bridge'
+import { startEventListeners, clearEventHandlers, onPiEvent, piNewSession, piCycleModel, piStart, piGetState, piReadDirectory, piIsRunning, piDeleteFile, piGetSessionStats, piAbort } from './ipc/bridge'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { useChatStore } from './stores/chat'
 import CodeEditor from './components/editor/CodeEditor.vue'
@@ -81,6 +81,7 @@ function handleKeydown(e: KeyboardEvent) {
 onMounted(async () => {
   // Load persisted settings
   settingsStore.loadPersisted()
+  sessionStore.loadPersisted()
 
   // Set CSS class for dark mode
   updateTheme()
@@ -294,6 +295,18 @@ async function handleFileRename(file: any, newName: string) {
   console.log('[PiGUI] Rename requested:', file.path, '->', newName)
 }
 
+async function handleGlobalAbort() {
+  console.log('[PiGUI] Global abort triggered')
+  try {
+    await piAbort()
+    // Also reset local streaming state
+    chatStore.isStreaming = false
+    chatStore.isCompacting = false
+  } catch (e) {
+    console.error('[PiGUI] Failed to abort:', e)
+  }
+}
+
 async function handleReconnect() {
   if (sessionStore.isRunning) return
   
@@ -341,6 +354,15 @@ async function handleReconnect() {
       </nav>
 
       <div class="sidebar-footer">
+        <!-- Global abort button (visible when agent is running) -->
+        <button 
+          v-if="chatStore.isStreaming || sessionStore.sessionStatus === 'running'"
+          class="global-abort-btn" 
+          @click="handleGlobalAbort"
+          title="Abort current operation"
+        >
+          ⏹ Stop
+        </button>
         <div class="status-indicator" :class="{ running: sessionStore.isRunning }" @click="handleReconnect">
           <span class="status-dot"></span>
           <span class="status-text">{{ sessionStore.isRunning ? 'Connected' : 'Offline (Click to connect)' }}</span>
@@ -626,6 +648,29 @@ html, body, #app {
 .status-text {
   font-size: 0.55em;
   color: var(--muted-color);
+}
+
+/* Global Abort Button */
+.global-abort-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+  padding: 8px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--error-color);
+  background: var(--error-bg);
+  color: var(--error-color);
+  font-size: 0.6em;
+  font-weight: 500;
+  margin-bottom: 6px;
+  transition: all 0.15s;
+}
+
+.global-abort-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
+  transform: scale(1.05);
 }
 
 /* ── Session Panel ── */

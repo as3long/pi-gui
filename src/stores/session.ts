@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useSettingsStore } from './settings'
 import { piGetSessionStats } from '../ipc/bridge'
 import type {
@@ -15,6 +15,9 @@ import type {
   SessionTreeSnapshot,
   SessionTreeNodeSnapshot,
 } from '../ipc/types'
+
+const STORAGE_KEY_WORKSPACE = 'pi-gui:currentWorkspace'
+const STORAGE_KEY_SESSION = 'pi-gui:currentSession'
 
 /**
  * Session store manages pi session lifecycle, workspace, and UI state.
@@ -36,6 +39,12 @@ export const useSessionStore = defineStore('session', () => {
   const sessionStatus = ref<SessionStatus>('idle')
   const runningRunId = ref<string | null>(null)
 
+  // ── Watchers ──
+  // Persist session when it changes
+  watch([currentSessionId, currentSessionFile, sessionName], () => {
+    persistState()
+  })
+
   // ── Session Tree ──
   const sessionTree = ref<SessionTreeSnapshot | null>(null)
   const currentTreeNodeId = ref<string | null>(null)
@@ -49,6 +58,10 @@ export const useSessionStore = defineStore('session', () => {
 
   // ── Error / info messages ──
   const lastError = ref<string | null>(null)
+
+  // ── Persistence ──
+  const STORAGE_KEY_WORKSPACE = 'pi-gui:currentWorkspace'
+  const STORAGE_KEY_SESSION = 'pi-gui:currentSession'
 
   // ── Computed ──
 
@@ -81,9 +94,46 @@ export const useSessionStore = defineStore('session', () => {
 
   // ── Actions ──
 
+  function loadPersisted() {
+    try {
+      const savedWorkspace = localStorage.getItem(STORAGE_KEY_WORKSPACE)
+      if (savedWorkspace) {
+        currentWorkspace.value = JSON.parse(savedWorkspace)
+      }
+      const savedSession = localStorage.getItem(STORAGE_KEY_SESSION)
+      if (savedSession) {
+        const data = JSON.parse(savedSession)
+        currentSessionId.value = data.sessionId
+        currentSessionFile.value = data.sessionFile
+        sessionName.value = data.sessionName
+      }
+    } catch (e) {
+      console.warn('[SessionStore] Failed to load persisted state:', e)
+    }
+  }
+
+  function persistState() {
+    try {
+      if (currentWorkspace.value) {
+        localStorage.setItem(STORAGE_KEY_WORKSPACE, JSON.stringify(currentWorkspace.value))
+      } else {
+        localStorage.removeItem(STORAGE_KEY_WORKSPACE)
+      }
+      if (currentSessionId.value) {
+        localStorage.setItem(STORAGE_KEY_SESSION, JSON.stringify({
+          sessionId: currentSessionId.value,
+          sessionFile: currentSessionFile.value,
+          sessionName: sessionName.value,
+        }))
+      } else {
+        localStorage.removeItem(STORAGE_KEY_SESSION)
+      }
+    } catch (e) {
+      console.warn('[SessionStore] Failed to persist state:', e)
+    }
+  }
+
   function handleEvent(event: RpcEvent) {
-    console.log('[SessionStore] handleEvent called, type:', event.type)
-    
     if (event.type === 'response') {
       // Support both camelCase and snake_case field names
       const response = event as any
@@ -226,12 +276,19 @@ export const useSessionStore = defineStore('session', () => {
     // Update session status based on agent events
     if (event.type === 'agent_start') {
       sessionStatus.value = 'running'
+      startAgentWatchdog()
     }
 
     if (event.type === 'agent_end') {
       sessionStatus.value = 'idle'
+      resetAgentWatchdog()
       // Refresh stats after agent completes
       scheduleStatsRefresh(500)
+    }
+
+    // Reset watchdog on any activity during running state
+    if (sessionStatus.value === 'running') {
+      resetAgentWatchdog()
     }
   }
 
@@ -261,6 +318,31 @@ export const useSessionStore = defineStore('session', () => {
   // ── Stats Refresh ──
   let statsRefreshInterval: ReturnType<typeof setInterval> | null = null
   let statsRefreshTimeout: ReturnType<typeof setTimeout> | null = null
+  
+  // ── Agent Watchdog - prevent UI hang during long tool execution
+  let agentWatchdogTimer: ReturnType<typeof setTimeout> | null = null
+  const agentLastActivity = ref(Date.now())
+
+  // Reset watchdog when agent activity is detected
+  function resetAgentWatchdog() {
+    agentLastActivity.value = Date.now()
+    if (agentWatchdogTimer) {
+      clearTimeout(agentWatchdogTimer)
+      agentWatchdogTimer = null
+    }
+  }
+
+  // Start watchdog when agent starts - warn if no activity for 60 seconds
+  function startAgentWatchdog() {
+    resetAgentWatchdog()
+    // Check every 10 seconds for activity
+    agentWatchdogTimer = setTimeout(() => {
+      const inactiveTime = (Date.now() - agentLastActivity.value) / 1000
+      if (inactiveTime > 60 && sessionStatus.value === 'running') {
+        console.warn(`[SessionStore] Agent inactive for ${Math.round(inactiveTime)}s - consider aborting`)
+      }
+    }, 10000)
+  }
 
   /**
    * Refresh stats from the backend.
@@ -326,6 +408,7 @@ export const useSessionStore = defineStore('session', () => {
 
   function setCurrentWorkspace(workspace: WorkspaceRef | null) {
     currentWorkspace.value = workspace
+    persistState()
   }
 
   // ── Session Tree Actions ──
@@ -404,6 +487,7 @@ export const useSessionStore = defineStore('session', () => {
     activeSessions,
 
     // Actions
+    loadPersisted,
     handleEvent,
     setSessions,
     addSession,
@@ -414,6 +498,7 @@ export const useSessionStore = defineStore('session', () => {
     startStatsRefresh,
     stopStatsRefresh,
     scheduleStatsRefresh,
+    resetAgentWatchdog,
 
     // Workspace Actions
     setWorkspaces,

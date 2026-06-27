@@ -180,11 +180,46 @@ type SessionEventListener = (event: SessionDriverEvent) => void | Promise<void>
 
 ## 下一步
 
-1. **UI 组件更新** - 更新 SessionTree 组件以支持新的类型系统
-2. **工作区选择器** - 添加工作区切换 UI
-3. **会话树视图** - 实现会话内消息树导航
+1. **UI 组件更新** - 更新 SessionTree 组件以支持新的类型系统 ✅
+2. **工作区选择器** - 添加工作区切换 UI ✅
+3. **会话树视图** - 实现会话内消息树导航 ✅
 4. **事件处理** - 完善事件监听和处理逻辑
-5. **持久化** - 实现工作区和会话状态的本地存储
+5. **持久化** - 实现工作区和会话状态的本地存储 ✅
+
+## 已完成的更新
+
+### 1. UI 组件更新 ✅
+
+- 更新 SessionTree 组件以支持新的类型系统
+- 集成 WorkspaceSelector 组件
+
+### 2. 工作区选择器 ✅
+
+新增 `src/components/workspace/WorkspaceSelector.vue`：
+
+- 显示当前工作区名称
+- 下拉选择工作区
+- 搜索工作区
+- 自动从 cwd 初始化默认工作区
+
+### 3. 会话树视图 ✅
+
+新增 `src/components/session/SessionTreeView.vue`：
+
+- 显示会话内的消息树结构
+- 支持节点点击导航
+- 显示节点类型图标
+- 显示时间戳
+- 支持刷新加载
+
+### 4. 持久化 ✅
+
+更新 `src/stores/session.ts`：
+
+- 新增 `loadPersisted()` 方法加载持久化状态
+- 新增 `persistState()` 方法保存状态到 localStorage
+- 保存当前工作区和会话信息
+- 自动在状态变化时持久化
 
 ## 参考
 
