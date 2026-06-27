@@ -266,8 +266,5 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // Optional: Show weather widget in status bar
-  pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.setWidget("weather", ["🌤️ 天气查询已就绪"]);
-  });
+  // No persistent widget needed - weather results show in chat
 }
