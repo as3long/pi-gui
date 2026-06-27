@@ -301,12 +301,22 @@ export async function startEventListeners(): Promise<() => void> {
           id: req.id
         }, null, 2))
         
+        // Handle notify method - show toast notification
+        if (req.method === 'notify' && req.message) {
+          console.log('[PiGUI] Showing notify toast:', req.message)
+          // Import notify function dynamically to avoid circular dependency
+          import('../../utils/notify').then(({ notifyInfo }) => {
+            notifyInfo(req.message)
+          })
+          return
+        }
+        
         // Skip empty/undesired requests:
         // 1. No method specified
         // 2. Status/widget updates (not user prompts)
         // 3. Only status_key without title/message
         // 4. Requests with no content at all (empty Prompt dialogs)
-        const skipMethods = ['status', 'widget', 'progress', 'status_update', 'notify']
+        const skipMethods = ['status', 'widget', 'progress', 'status_update', 'setStatus']
         const hasNoUserContent = !req.title && !req.message && !req.options && !req.placeholder && !req.prefill
         
         if (!req.method || skipMethods.includes(req.method) || (hasNoUserContent && req.status_key) || hasNoUserContent) {

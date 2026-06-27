@@ -432,8 +432,8 @@ export const useChatStore = defineStore('chat', () => {
         break
 
       case 'message_end': {
-        console.log('[ChatStore] Message end received')
         const endMsg = (event as any).message
+        console.log('[ChatStore] Message end received, msg:', endMsg ? JSON.stringify(endMsg).substring(0, 200) : 'null')
         
         // Capture the full message content if available
         if (endMsg?.role === 'assistant' && Array.isArray(endMsg.content)) {
