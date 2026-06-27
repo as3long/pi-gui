@@ -167,12 +167,37 @@ const textWithoutCode = computed(() => {
   return textContent.value.replace(/```[\s\S]*?```/g, '').trim()
 })
 
+// Simple diff cache
+const diffCache = new Map<string, DiffLine[]>()
+const MAX_DIFF_LINES = 200
+
 const editDiffLines = computed((): DiffLine[] => {
   const tc = correspondingToolCall.value
   if (!tc?.diff) return []
   
+  // Check cache
+  const cacheKey = tc.diff.oldText + '\0' + tc.diff.newText
+  if (diffCache.has(cacheKey)) {
+    return diffCache.get(cacheKey)!
+  }
+  
   const oldLines = tc.diff.oldText.split('\n')
   const newLines = tc.diff.newText.split('\n')
+  
+  // Skip expensive LCS for large diffs
+  if (oldLines.length + newLines.length > MAX_DIFF_LINES) {
+    const result: DiffLine[] = []
+    let oldLineNum = 1
+    for (const line of oldLines) {
+      result.push({ type: 'remove', oldLineNum: oldLineNum++, text: line })
+    }
+    let newLineNum = 1
+    for (const line of newLines) {
+      result.push({ type: 'add', newLineNum: newLineNum++, text: line })
+    }
+    diffCache.set(cacheKey, result)
+    return result
+  }
   
   const result: DiffLine[] = []
   const lcs = computeLCS(oldLines, newLines)
@@ -213,6 +238,11 @@ const editDiffLines = computed((): DiffLine[] => {
     }
   }
   
+  // Cache result
+  if (diffCache.size > 50) {
+    diffCache.clear()
+  }
+  diffCache.set(cacheKey, result)
   return result
 })
 </script>

@@ -98,11 +98,11 @@ defineExpose({ focusInput })
 <template>
   <div class="input-area">
     <!-- Queue info banner -->
-    <div v-if="chatStore.pendingSteering.length > 0" class="queue-banner">
+    <div v-if="chatStore.pendingSteering && chatStore.pendingSteering.length > 0" class="queue-banner">
       <span class="queue-label">Steering:</span>
       <span class="queue-count">{{ chatStore.pendingSteering.length }} message(s) queued</span>
     </div>
-    <div v-if="chatStore.pendingFollowUp.length > 0" class="queue-banner follow-up">
+    <div v-if="chatStore.pendingFollowUp && chatStore.pendingFollowUp.length > 0" class="queue-banner follow-up">
       <span class="queue-label">Follow-up:</span>
       <span class="queue-count">{{ chatStore.pendingFollowUp.length }} message(s) queued</span>
     </div>

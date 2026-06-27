@@ -444,8 +444,8 @@ export const useChatStore = defineStore('chat', () => {
         break
 
       case 'queue_update':
-        pendingSteering.value = event.steering
-        pendingFollowUp.value = event.follow_up
+        pendingSteering.value = (event as any).steering || []
+        pendingFollowUp.value = (event as any).follow_up || []
         break
 
       case 'compaction_start':

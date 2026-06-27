@@ -12,7 +12,16 @@ interface DiffLine {
   text: string
 }
 
+// Simple diff cache to avoid re-computing on every render
+const diffCache = new Map<string, DiffLine[]>()
+const MAX_DIFF_LINES = 200 // Limit diff computation for large edits
+
 function parseEditDiff(args: string): DiffLine[] {
+  // Check cache first
+  if (diffCache.has(args)) {
+    return diffCache.get(args)!
+  }
+  
   try {
     const parsed = JSON.parse(args)
     if (!parsed.oldText || !parsed.newText) return []
@@ -20,7 +29,22 @@ function parseEditDiff(args: string): DiffLine[] {
     const oldLines = parsed.oldText.split('\n')
     const newLines = parsed.newText.split('\n')
     
-    // Simple LCS-based diff
+    // Skip expensive LCS for large diffs - just show add/remove lines
+    if (oldLines.length + newLines.length > MAX_DIFF_LINES) {
+      const result: DiffLine[] = []
+      // Show removed lines
+      for (const line of oldLines) {
+        result.push({ type: 'remove', text: line })
+      }
+      // Show added lines
+      for (const line of newLines) {
+        result.push({ type: 'add', text: line })
+      }
+      diffCache.set(args, result)
+      return result
+    }
+    
+    // Simple LCS-based diff for small edits
     const result: DiffLine[] = []
     const lcs = computeLCS(oldLines, newLines)
     
@@ -58,6 +82,11 @@ function parseEditDiff(args: string): DiffLine[] {
       }
     }
     
+    // Cache result (limit cache size)
+    if (diffCache.size > 50) {
+      diffCache.clear()
+    }
+    diffCache.set(args, result)
     return result
   } catch {
     return []
