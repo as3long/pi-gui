@@ -88,10 +88,7 @@ export const useChatStore = defineStore('chat', () => {
   // ── Actions ──
 
   function addMessage(msg: AgentMessage) {
-    console.log('[ChatStore] addMessage called, role:', msg.role)
-    const newMsgs = [...messages.value, msg]
-    messages.value = newMsgs
-    console.log('[ChatStore] messages count after add:', messages.value.length)
+    messages.value = [...messages.value, msg]
   }
 
   function flushBufferedStreaming() {
@@ -432,10 +429,8 @@ export const useChatStore = defineStore('chat', () => {
         break
 
       case 'message_end': {
-        console.log('[ChatStore] Message end received')
-        console.log('[ChatStore] Full event:', JSON.stringify(event).substring(0, 500))
         const endMsg = (event as any).message
-        console.log('[ChatStore] endMsg:', endMsg ? JSON.stringify(endMsg).substring(0, 300) : 'null')
+        console.log('[ChatStore] Message end, role:', endMsg?.role, 'content:', Array.isArray(endMsg?.content) ? endMsg.content.length : 0, 'items')
         
         // Capture the full message content if available
         if (endMsg?.role === 'assistant' && Array.isArray(endMsg.content)) {
