@@ -18,13 +18,9 @@
 
 ## 🟡 中优先级 - 可能导致卡顿
 
-### 4. config.rs - 同步文件读写
+### 4. ✅ config.rs - 同步文件读写
 **问题**: `fs::read_to_string` 是同步阻塞的。
-```rust
-// config.rs:76, 113
-let content = fs::read_to_string(&config_path)?;
-```
-**修复方案**: 改用 `tokio::fs::read_to_string`
+**修复**: 改用 `tokio::fs::read_to_string` 和 `tokio::fs::write`
 
 ### 5. ✅ model.rs - 同步进程调用
 **问题**: 虽然用了 `tokio::process::Command`，但命令执行时间可能很长。
@@ -38,15 +34,9 @@ let content = fs::read_to_string(&config_path)?;
 
 ## 🟢 低优先级 - 优化项
 
-### 7. 前端 localStorage 频繁写入
+### 7. ✅ 前端 localStorage 频繁写入
 **问题**: settings store 每次设置都写入 localStorage。
-```typescript
-// settings.ts:26, 31, 36, 41, 54
-localStorage.setItem('pi-gui:cwd', path)
-```
-**修复方案**: 
-- 添加防抖 (debounce)
-- 或批量写入
+**修复**: 添加 100ms 防抖，批量合并多次快速写入
 
 ### 8. ✅ 前端 JSON 解析
 **问题**: 事件处理中频繁 `JSON.parse`。
@@ -64,11 +54,11 @@ localStorage.setItem('pi-gui:cwd', path)
 | process.rs | lock timeout 保护 | ✅ |
 | messages.rs | try_lock + make public | ✅ |
 
-### Phase 2: 优化体验 (待执行)
-| 文件 | 修复内容 | 预期效果 |
-|------|---------|---------|
-| config.rs | 改 tokio::fs | 文件操作不阻塞 |
-| settings.ts | localStorage 防抖 | 减少写入频率 |
+### Phase 2: ✅ 优化体验 (已完成)
+| 文件 | 修复内容 | 状态 |
+|------|---------|------|
+| config.rs | 改 tokio::fs | ✅ |
+| settings.ts | localStorage 防抖 100ms | ✅ |
 
 ### Phase 3: 性能提升 (中期)
 | 文件 | 修复内容 | 预期效果 |

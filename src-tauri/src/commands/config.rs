@@ -2,6 +2,7 @@ use dirs::home_dir;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use tokio::fs as tokio_fs;
 
 /// Find the pi binary in PATH or common locations.
 /// 
@@ -64,16 +65,18 @@ pub fn find_pi_binary() -> Result<String, String> {
     Err("pi not found. Please ensure pi-coding-agent is installed and available in PATH.".into())
 }
 
-/// Get agent settings (async, file I/O is blocking but fast).
+/// Get agent settings (async with tokio).
 #[tauri::command]
 pub async fn pi_get_agent_settings() -> Result<serde_json::Value, String> {
     let config_path = get_config_path()?;
     
+    // Check if file exists (blocking but fast for local filesystem)
     if !config_path.exists() {
         return Ok(serde_json::json!({}));
     }
     
-    let content = fs::read_to_string(&config_path)
+    let content = tokio_fs::read_to_string(&config_path)
+        .await
         .map_err(|e| format!("Failed to read config: {}", e))?;
     
     let settings: serde_json::Value = serde_json::from_str(&content)
@@ -82,26 +85,27 @@ pub async fn pi_get_agent_settings() -> Result<serde_json::Value, String> {
     Ok(settings)
 }
 
-/// Set agent settings (async).
+/// Set agent settings (async with tokio).
 #[tauri::command]
 pub async fn pi_set_agent_settings(settings: serde_json::Value) -> Result<(), String> {
     let config_path = get_config_path()?;
     
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
-        let _ = fs::create_dir_all(parent);
+        let _ = tokio_fs::create_dir_all(parent).await;
     }
     
     let content = serde_json::to_string_pretty(&settings)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
     
-    fs::write(&config_path, content)
+    tokio_fs::write(&config_path, content)
+        .await
         .map_err(|e| format!("Failed to write config: {}", e))?;
     
     Ok(())
 }
 
-/// Get agent auth configuration (async).
+/// Get agent auth configuration (async with tokio).
 #[tauri::command]
 pub async fn pi_get_agent_auth() -> Result<serde_json::Value, String> {
     let auth_path = get_auth_path()?;
@@ -110,7 +114,8 @@ pub async fn pi_get_agent_auth() -> Result<serde_json::Value, String> {
         return Ok(serde_json::json!({}));
     }
     
-    let content = fs::read_to_string(&auth_path)
+    let content = tokio_fs::read_to_string(&auth_path)
+        .await
         .map_err(|e| format!("Failed to read auth: {}", e))?;
     
     let auth: serde_json::Value = serde_json::from_str(&content)
@@ -119,20 +124,21 @@ pub async fn pi_get_agent_auth() -> Result<serde_json::Value, String> {
     Ok(auth)
 }
 
-/// Set agent auth configuration (async).
+/// Set agent auth configuration (async with tokio).
 #[tauri::command]
 pub async fn pi_set_agent_auth(auth: serde_json::Value) -> Result<(), String> {
     let auth_path = get_auth_path()?;
     
     // Ensure parent directory exists
     if let Some(parent) = auth_path.parent() {
-        let _ = fs::create_dir_all(parent);
+        let _ = tokio_fs::create_dir_all(parent).await;
     }
     
     let content = serde_json::to_string_pretty(&auth)
         .map_err(|e| format!("Failed to serialize auth: {}", e))?;
     
-    fs::write(&auth_path, content)
+    tokio_fs::write(&auth_path, content)
+        .await
         .map_err(|e| format!("Failed to write auth: {}", e))?;
     
     Ok(())

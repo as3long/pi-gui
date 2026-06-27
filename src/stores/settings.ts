@@ -20,25 +20,40 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // ── Actions ──
 
+  // Persist settings to localStorage (debounced)
+  function persistSettings() {
+    localStorage.setItem('pi-gui:cwd', cwd.value)
+    localStorage.setItem('pi-gui:provider', provider.value)
+    localStorage.setItem('pi-gui:modelId', modelId.value)
+    localStorage.setItem('pi-gui:thinkingLevel', thinkingLevel.value)
+    localStorage.setItem('pi-gui:darkMode', String(darkMode.value))
+  }
+
+  // Debounced persist - batches multiple rapid changes
+  let persistTimer: ReturnType<typeof setTimeout> | null = null
+  function schedulePersist() {
+    if (persistTimer) clearTimeout(persistTimer)
+    persistTimer = setTimeout(persistSettings, 100)
+  }
+
   function setCwd(path: string) {
     cwd.value = path
-    // Persist to localStorage
-    localStorage.setItem('pi-gui:cwd', path)
+    schedulePersist()
   }
 
   function setProvider(p: string) {
     provider.value = p
-    localStorage.setItem('pi-gui:provider', p)
+    schedulePersist()
   }
 
   function setModelId(id: string) {
     modelId.value = id
-    localStorage.setItem('pi-gui:modelId', id)
+    schedulePersist()
   }
 
   function setThinkingLevel(level: ThinkingLevel) {
     thinkingLevel.value = level
-    localStorage.setItem('pi-gui:thinkingLevel', level)
+    schedulePersist()
   }
 
   function setAutoCompaction(enabled: boolean) {
@@ -51,7 +66,7 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function toggleDarkMode() {
     darkMode.value = !darkMode.value
-    localStorage.setItem('pi-gui:darkMode', String(darkMode.value))
+    schedulePersist()
   }
 
   function setAvailableModels(models: Array<{ id: string; name: string; provider: string; reasoning?: boolean }>) {
