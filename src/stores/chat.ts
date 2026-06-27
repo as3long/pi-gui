@@ -35,11 +35,16 @@ export const useChatStore = defineStore('chat', () => {
   let bufferedThinking = ''
   let streamingThrottleTimer: ReturnType<typeof setTimeout> | null = null
 
-  // Watch for message changes and save to localStorage
+  // Watch for message changes and save to localStorage (debounced)
+  let saveTimeout: ReturnType<typeof setTimeout> | null = null
   watch(
     () => messages.value,
     (newMessages) => {
-      saveMessages(newMessages)
+      // Debounce save to avoid frequent localStorage writes
+      if (saveTimeout) clearTimeout(saveTimeout)
+      saveTimeout = setTimeout(() => {
+        saveMessages(newMessages)
+      }, 500)
     },
     { deep: true }
   )
@@ -57,14 +62,16 @@ export const useChatStore = defineStore('chat', () => {
     return []
   }
 
-  // Save messages to localStorage
+  // Save messages to localStorage (limit to last 50 messages to avoid size issues)
   function saveMessages(msgs: AgentMessage[]) {
     try {
       // Don't save empty arrays
       if (msgs.length === 0) {
         return
       }
-      localStorage.setItem('pi-gui:messages', JSON.stringify(msgs))
+      // Only save last 50 messages to avoid localStorage quota issues
+      const msgsToSave = msgs.slice(-50)
+      localStorage.setItem('pi-gui:messages', JSON.stringify(msgsToSave))
     } catch (e) {
       console.error('[ChatStore] Failed to save messages:', e)
     }
@@ -294,6 +301,11 @@ export const useChatStore = defineStore('chat', () => {
 
   function clearMessages() {
     messages.value = []
+    // Clear the debounced timeout if any
+    if (saveTimeout) {
+      clearTimeout(saveTimeout)
+      saveTimeout = null
+    }
     localStorage.removeItem('pi-gui:messages')
   }
 

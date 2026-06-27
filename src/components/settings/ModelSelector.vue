@@ -9,6 +9,7 @@ const sessionStore = useSessionStore()
 
 const providerInput = ref(settingsStore.provider)
 const modelInput = ref(settingsStore.modelId)
+const isRefreshing = ref(false)
 
 const thinkingLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 
@@ -21,15 +22,25 @@ async function applyModel() {
 
 async function refreshModels() {
   console.log('[ModelSelector] Refresh button clicked')
+  isRefreshing.value = true
   try {
-    const models = await piGetAvailableModels()
-    console.log('[ModelSelector] Got models:', models)
+    // Add timeout on frontend side too (20 seconds)
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Timeout after 20 seconds')), 20000)
+    })
+    
+    const models = await Promise.race([
+      piGetAvailableModels(),
+      timeoutPromise
+    ]) as any[]
+    
+    console.log('[ModelSelector] Got models:', models.length)
     settingsStore.setAvailableModels(models)
-    console.log('[ModelSelector] Refreshed models:', models.length)
   } catch (e) {
     console.error('[ModelSelector] Failed to refresh models:', e)
-    // Show user-friendly error
-    alert(`Failed to refresh models: ${e}`)
+    // Don't show alert to avoid blocking UI, just log
+  } finally {
+    isRefreshing.value = false
   }
 }
 
@@ -70,7 +81,14 @@ async function changeThinkingLevel(level: string) {
 
     <div class="button-row">
       <button class="btn btn-primary" @click="applyModel">Apply Model</button>
-      <button class="btn btn-secondary" @click="refreshModels">Refresh List</button>
+      <button 
+        class="btn btn-secondary" 
+        :class="{ loading: isRefreshing }"
+        :disabled="isRefreshing"
+        @click="refreshModels"
+      >
+        {{ isRefreshing ? '⏳ Loading...' : 'Refresh List' }}
+      </button>
     </div>
 
     <h3 class="section-title thinking-title">Thinking Level</h3>
@@ -188,6 +206,15 @@ async function changeThinkingLevel(level: string) {
 
 .btn-secondary {
   background: var(--input-bg);
+}
+
+.btn.loading {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.btn:disabled {
+  pointer-events: none;
 }
 
 .thinking-buttons {

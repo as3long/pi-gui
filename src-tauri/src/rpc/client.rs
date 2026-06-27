@@ -175,10 +175,12 @@ impl PiRpcClient {
             // Windows: Use taskkill to kill entire process tree
             #[cfg(target_os = "windows")]
             {
+                use std::os::windows::process::CommandExt;
                 use std::process::Stdio;
                 let pid = process.id();
                 let _ = Command::new("taskkill")
                     .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .spawn()

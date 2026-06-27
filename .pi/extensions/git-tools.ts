@@ -867,12 +867,18 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("git-status", {
     description: "Show git working tree status",
     handler: async (_args: string, ctx: ExtensionCommandContext) => {
-      if (!(await isGitRepo(pi))) {
-        ctx.ui.notify("Not a git repository", "error");
-        return;
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          if (!(await isGitRepo(freshCtx))) {
+            ctx.ui.notify("Not a git repository", "error");
+            return;
+          }
+          const status = await formatStatus(freshCtx);
+          ctx.ui.notify(status, "info");
+        });
+      } catch (e) {
+        ctx.ui.notify(`Error: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
-      const status = await formatStatus(pi);
-      ctx.ui.notify(status, "info");
     },
   });
 
@@ -880,20 +886,26 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("git-log", {
     description: "Show recent git commits. Usage: /git-log [count=10]",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      if (!(await isGitRepo(pi))) {
-        ctx.ui.notify("Not a git repository", "error");
-        return;
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          if (!(await isGitRepo(freshCtx))) {
+            ctx.ui.notify("Not a git repository", "error");
+            return;
+          }
+          const count = parseInt(args, 10) || 10;
+          const result = await git(freshCtx, [
+            "log", `--max-count=${Math.min(count, 50)}`,
+            "--pretty=format:%C(yellow)%h%Creset %C(cyan)%an%Creset %C(green)%ar%Creset%n  %s",
+          ]);
+          if (!result.ok) {
+            ctx.ui.notify(`Git log failed: ${result.stderr}`, "error");
+            return;
+          }
+          ctx.ui.notify(`\`\`\`\n${result.stdout.trim()}\n\`\`\``, "info");
+        });
+      } catch (e) {
+        ctx.ui.notify(`Error: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
-      const count = parseInt(args, 10) || 10;
-      const result = await git(pi, [
-        "log", `--max-count=${Math.min(count, 50)}`,
-        "--pretty=format:%C(yellow)%h%Creset %C(cyan)%an%Creset %C(green)%ar%Creset%n  %s",
-      ]);
-      if (!result.ok) {
-        ctx.ui.notify(`Git log failed: ${result.stderr}`, "error");
-        return;
-      }
-      ctx.ui.notify(`\`\`\`\n${result.stdout.trim()}\n\`\`\``, "info");
     },
   });
 
@@ -901,32 +913,38 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("git-diff", {
     description: "Show git diff (unstaged changes). Usage: /git-diff [--staged|--cached] [path]",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      if (!(await isGitRepo(pi))) {
-        ctx.ui.notify("Not a git repository", "error");
-        return;
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          if (!(await isGitRepo(freshCtx))) {
+            ctx.ui.notify("Not a git repository", "error");
+            return;
+          }
+          const parts = args.split(/\s+/).filter(Boolean);
+          const gitArgs = ["diff"];
+          for (const part of parts) {
+            if (part === "--staged" || part === "--cached") {
+              gitArgs.push("--cached");
+            } else {
+              gitArgs.push("--", part);
+            }
+          }
+          const result = await git(freshCtx, gitArgs);
+          if (!result.ok) {
+            ctx.ui.notify(`Git diff failed: ${result.stderr}`, "error");
+            return;
+          }
+          const output = result.stdout.trim();
+          if (!output) {
+            ctx.ui.notify("No differences found.", "info");
+            return;
+          }
+          // truncate for notification display
+          const display = output.length > 5000 ? output.slice(0, 5000) + "\n... (truncated)" : output;
+          ctx.ui.notify(`\`\`\`diff\n${display}\n\`\`\``, "info");
+        });
+      } catch (e) {
+        ctx.ui.notify(`Error: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
-      const parts = args.split(/\s+/).filter(Boolean);
-      const gitArgs = ["diff"];
-      for (const part of parts) {
-        if (part === "--staged" || part === "--cached") {
-          gitArgs.push("--cached");
-        } else {
-          gitArgs.push("--", part);
-        }
-      }
-      const result = await git(pi, gitArgs);
-      if (!result.ok) {
-        ctx.ui.notify(`Git diff failed: ${result.stderr}`, "error");
-        return;
-      }
-      const output = result.stdout.trim();
-      if (!output) {
-        ctx.ui.notify("No differences found.", "info");
-        return;
-      }
-      // truncate for notification display
-      const display = output.length > 5000 ? output.slice(0, 5000) + "\n... (truncated)" : output;
-      ctx.ui.notify(`\`\`\`diff\n${display}\n\`\`\``, "info");
     },
   });
 
@@ -934,19 +952,25 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("git-branch", {
     description: "List git branches. Usage: /git-branch [-a]",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      if (!(await isGitRepo(pi))) {
-        ctx.ui.notify("Not a git repository", "error");
-        return;
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          if (!(await isGitRepo(freshCtx))) {
+            ctx.ui.notify("Not a git repository", "error");
+            return;
+          }
+          const allFlag = args.trim() === "-a";
+          const gitArgs = ["branch"];
+          if (allFlag) gitArgs.push("-a");
+          const result = await git(freshCtx, gitArgs);
+          if (!result.ok) {
+            ctx.ui.notify(`Failed to list branches: ${result.stderr}`, "error");
+            return;
+          }
+          ctx.ui.notify(`\`\`\`\n${result.stdout.trim()}\n\`\`\``, "info");
+        });
+      } catch (e) {
+        ctx.ui.notify(`Error: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
-      const allFlag = args.trim() === "-a";
-      const gitArgs = ["branch"];
-      if (allFlag) gitArgs.push("-a");
-      const result = await git(pi, gitArgs);
-      if (!result.ok) {
-        ctx.ui.notify(`Failed to list branches: ${result.stderr}`, "error");
-        return;
-      }
-      ctx.ui.notify(`\`\`\`\n${result.stdout.trim()}\n\`\`\``, "info");
     },
   });
 
@@ -954,20 +978,26 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("git-pull", {
     description: "Pull from remote. Usage: /git-pull [remote] [branch]",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      if (!(await isGitRepo(pi))) {
-        ctx.ui.notify("Not a git repository", "error");
-        return;
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          if (!(await isGitRepo(freshCtx))) {
+            ctx.ui.notify("Not a git repository", "error");
+            return;
+          }
+          const parts = args.split(/\s+/).filter(Boolean);
+          const remote = parts[0] || "origin";
+          const branch = parts[1] || (await getCurrentBranch(freshCtx));
+          ctx.ui.notify(`Pulling from ${remote}/${branch}...`, "info");
+          const result = await git(freshCtx, ["pull", remote, branch], { timeout: 120_000 });
+          if (!result.ok) {
+            ctx.ui.notify(`Pull failed: ${result.stderr}`, "error");
+            return;
+          }
+          ctx.ui.notify(result.stdout.trim() || "Already up to date.", "info");
+        });
+      } catch (e) {
+        ctx.ui.notify(`Error: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
-      const parts = args.split(/\s+/).filter(Boolean);
-      const remote = parts[0] || "origin";
-      const branch = parts[1] || (await getCurrentBranch(pi));
-      ctx.ui.notify(`Pulling from ${remote}/${branch}...`, "info");
-      const result = await git(pi, ["pull", remote, branch], { timeout: 120_000 });
-      if (!result.ok) {
-        ctx.ui.notify(`Pull failed: ${result.stderr}`, "error");
-        return;
-      }
-      ctx.ui.notify(result.stdout.trim() || "Already up to date.", "info");
     },
   });
 
@@ -975,44 +1005,50 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("git-commit", {
     description: "Interactively commit staged changes. Usage: /git-commit [message]",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      if (!(await isGitRepo(pi))) {
-        ctx.ui.notify("Not a git repository", "error");
-        return;
-      }
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          if (!(await isGitRepo(freshCtx))) {
+            ctx.ui.notify("Not a git repository", "error");
+            return;
+          }
 
-      if (args.trim()) {
-        // Direct commit with message from args
-        const result = await git(pi, ["commit", "-m", args.trim()]);
-        if (!result.ok) {
-          ctx.ui.notify(`Commit failed: ${result.stderr}`, "error");
-          return;
-        }
-        ctx.ui.notify(`✅ ${result.stdout.trim()}`, "info");
-        return;
-      }
+          if (args.trim()) {
+            // Direct commit with message from args
+            const result = await git(freshCtx, ["commit", "-m", args.trim()]);
+            if (!result.ok) {
+              ctx.ui.notify(`Commit failed: ${result.stderr}`, "error");
+              return;
+            }
+            ctx.ui.notify(`✅ ${result.stdout.trim()}`, "info");
+            return;
+          }
 
-      // Interactive: prompt for message via UI
-      const staged = await getStagedFiles(pi);
-      if (staged.length === 0) {
-        ctx.ui.notify("Nothing staged. Stage files first with /git-add or use git_add tool.", "warning");
-        return;
-      }
+          // Interactive: prompt for message via UI
+          const staged = await getStagedFiles(freshCtx);
+          if (staged.length === 0) {
+            ctx.ui.notify("Nothing staged. Stage files first with /git-add or use git_add tool.", "warning");
+            return;
+          }
 
-      const msg = await ctx.ui.input("Commit Message", {
-        placeholder: "Enter commit message...",
-      });
+          const msg = await ctx.ui.input("Commit Message", {
+            placeholder: "Enter commit message...",
+          });
 
-      if (!msg) {
-        ctx.ui.notify("Commit cancelled.", "info");
-        return;
-      }
+          if (!msg) {
+            ctx.ui.notify("Commit cancelled.", "info");
+            return;
+          }
 
-      const result = await git(pi, ["commit", "-m", msg]);
-      if (!result.ok) {
-        ctx.ui.notify(`Commit failed: ${result.stderr}`, "error");
-        return;
+          const result = await git(freshCtx, ["commit", "-m", msg]);
+          if (!result.ok) {
+            ctx.ui.notify(`Commit failed: ${result.stderr}`, "error");
+            return;
+          }
+          ctx.ui.notify(`✅ ${result.stdout.trim()}`, "info");
+        });
+      } catch (e) {
+        ctx.ui.notify(`Error: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
-      ctx.ui.notify(`✅ ${result.stdout.trim()}`, "info");
     },
   });
 
@@ -1020,35 +1056,41 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("git-add", {
     description: "Stage files interactively. Usage: /git-add <file...> or '.' for all",
     handler: async (args: string, ctx: ExtensionCommandContext) => {
-      if (!(await isGitRepo(pi))) {
-        ctx.ui.notify("Not a git repository", "error");
-        return;
-      }
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          if (!(await isGitRepo(freshCtx))) {
+            ctx.ui.notify("Not a git repository", "error");
+            return;
+          }
 
-      const files = args.trim();
-      if (!files) {
-        // Show files that can be staged
-        const unstaged = await getUnstagedFiles(pi);
-        const untracked = await getUntrackedFiles(pi);
-        const all = [...unstaged, ...untracked];
-        if (all.length === 0) {
-          ctx.ui.notify("No files to stage.", "info");
-          return;
-        }
-        ctx.ui.notify(
-          `Available to stage:\n${all.map((f) => `  - ${f}`).join("\n")}\n\nUse: /git-add <file> or /git-add .`,
-          "info",
-        );
-        return;
-      }
+          const files = args.trim();
+          if (!files) {
+            // Show files that can be staged
+            const unstaged = await getUnstagedFiles(freshCtx);
+            const untracked = await getUntrackedFiles(freshCtx);
+            const all = [...unstaged, ...untracked];
+            if (all.length === 0) {
+              ctx.ui.notify("No files to stage.", "info");
+              return;
+            }
+            ctx.ui.notify(
+              `Available to stage:\n${all.map((f) => `  - ${f}`).join("\n")}\n\nUse: /git-add <file> or /git-add .`,
+              "info",
+            );
+            return;
+          }
 
-      const filesToStage = files === "." ? ["."] : files.split(/\s+/);
-      const result = await git(pi, ["add", ...filesToStage]);
-      if (!result.ok) {
-        ctx.ui.notify(`Stage failed: ${result.stderr}`, "error");
-        return;
+          const filesToStage = files === "." ? ["."] : files.split(/\s+/);
+          const result = await git(freshCtx, ["add", ...filesToStage]);
+          if (!result.ok) {
+            ctx.ui.notify(`Stage failed: ${result.stderr}`, "error");
+            return;
+          }
+          ctx.ui.notify(`✅ Staged: ${filesToStage.join(", ")}`, "info");
+        });
+      } catch (e) {
+        ctx.ui.notify(`Error: ${e instanceof Error ? e.message : String(e)}`, "error");
       }
-      ctx.ui.notify(`✅ Staged: ${filesToStage.join(", ")}`, "info");
     },
   });
 
@@ -1063,9 +1105,16 @@ export default function (pi: ExtensionAPI) {
       if (id && !checkpoints.has(id)) {
         // Defer checkpoint creation to not slow down tool execution
         setTimeout(async () => {
-          const { stdout } = await pi.exec("git", ["stash", "create"], { timeout: 15_000 });
-          const ref = stdout.trim();
-          if (ref) checkpoints.set(id, ref);
+          try {
+            // Use ctx.withSession to get a fresh active context instead of stale pi reference
+            await ctx.withSession(async (freshCtx) => {
+              const { stdout } = await freshCtx.exec("git", ["stash", "create"], { timeout: 15_000 });
+              const ref = stdout.trim();
+              if (ref) checkpoints.set(id, ref);
+            });
+          } catch {
+            // Session might have been replaced — silently ignore
+          }
         }, 0);
       }
     }
@@ -1082,8 +1131,14 @@ export default function (pi: ExtensionAPI) {
     ]);
 
     if (choice?.startsWith("Yes")) {
-      await pi.exec("git", ["stash", "apply", ref]);
-      ctx.ui.notify("✅ Code restored to fork checkpoint", "info");
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          await freshCtx.exec("git", ["stash", "apply", ref]);
+          ctx.ui.notify("✅ Code restored to fork checkpoint", "info");
+        });
+      } catch {
+        // Session might have been replaced — silently ignore
+      }
     }
   });
 
@@ -1092,20 +1147,32 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
     // Defer git info load — don't block pi startup
     setTimeout(async () => {
-      if (!(await isGitRepo(pi))) return;
-      const branch = await getCurrentBranch(pi);
-      const dirty = await hasUncommittedChanges(pi);
-      const icon = dirty ? "⚠️" : "✅";
-      ctx.ui.setStatus("git", `${icon} ${branch}`);
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          if (!(await isGitRepo(freshCtx))) return;
+          const branch = await getCurrentBranch(freshCtx);
+          const dirty = await hasUncommittedChanges(freshCtx);
+          const icon = dirty ? "⚠️" : "✅";
+          ctx.ui.setStatus("git", `${icon} ${branch}`);
+        });
+      } catch {
+        // Session might have been replaced — silently ignore
+      }
     }, 0);
   });
 
   // Notify on session start (deferred)
   pi.on("session_start", async (_event: any, ctx: ExtensionContext) => {
     setTimeout(async () => {
-      if (!(await isGitRepo(pi))) return;
-      const branch = await getCurrentBranch(pi);
-      ctx.ui.notify(`🐙 Git ready — on branch \`${branch}\``, "info");
+      try {
+        await ctx.withSession(async (freshCtx) => {
+          if (!(await isGitRepo(freshCtx))) return;
+          const branch = await getCurrentBranch(freshCtx);
+          ctx.ui.notify(`🐙 Git ready — on branch \`${branch}\``, "info");
+        });
+      } catch {
+        // Session might have been replaced — silently ignore
+      }
     }, 0);
   });
 }

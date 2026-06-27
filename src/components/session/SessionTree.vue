@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useSessionStore } from '../../stores/session'
 import { useChatStore } from '../../stores/chat'
+import { ask } from '@tauri-apps/plugin-dialog'
 import { piNewSession, piSwitchSession, piFork, piReadSession, piReadDirectory, piGetHomeDir, piDeleteFile, piGetSessionStats } from '../../ipc/bridge'
 
 const sessionStore = useSessionStore()
@@ -98,49 +99,102 @@ async function readSessionMetadata(filePath: string): Promise<SessionMetadata | 
   try {
     // Read the session file using piReadSession which returns parsed content
     const sessionData = await piReadSession(filePath)
-    if (!sessionData) return null
+    if (!sessionData) {
+      console.log('[SessionTree] No session data returned for:', filePath)
+      return null
+    }
     
-    // Extract metadata from the parsed session
-    const sessionHeader = sessionData.session_info || sessionData
-    const messages = sessionData.messages || []
+    // Handle both formats: array of messages (JSONL) or object with messages array
+    const messages = Array.isArray(sessionData) ? sessionData : (sessionData.messages || [])
     
-    // Normalize timestamp format (handle T04-13-35 style)
-    const rawTs = sessionHeader.timestamp || ''
-    const timestamp = rawTs.replace(
-      /(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z/,
-      '$1:$2:$3.$4Z'
-    )
+    if (messages.length === 0) {
+      console.log('[SessionTree] No messages found in:', filePath)
+      return null
+    }
 
+    // Find first message to get timestamp
+    const firstMsg = messages[0]
+    const firstMsgContent = firstMsg.message || firstMsg
+    const timestamp = firstMsgContent.timestamp || firstMsg.timestamp || ''
+    
     // Find first user message as session name
-    const firstUserMsg = messages.find((m: any) => m.role === 'user')
+    const firstUserMsg = messages.find((m: any) => {
+      const msg = m.message || m
+      return msg.role === 'user'
+    })
+    
     let name: string | undefined
     if (firstUserMsg) {
-      const content = firstUserMsg.content
+      const msg = firstUserMsg.message || firstUserMsg
+      const content = msg.content
       const text = Array.isArray(content)
         ? content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join(' ')
         : typeof content === 'string' ? content : ''
-      name = text.trim().replace(/\n+/g, ' ').slice(0, 60) || undefined
+      name = text.trim().replace(/\n+/g, ' ').slice(0, 80) || undefined
+      console.log('[SessionTree] Session name:', name)
+    } else {
+      console.log('[SessionTree] No user message found in:', filePath)
     }
 
+    // Get model and provider from last assistant message
+    let model: string | undefined
+    let provider: string | undefined
+    
+    // Reverse search to find the last assistant message
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i].message || messages[i]
+      if (msg.role === 'assistant') {
+        model = msg.model || msg.responseModel
+        provider = msg.provider
+        break
+      }
+    }
+
+    // Count user and assistant messages
+    let messageCount = 0
+    for (const m of messages) {
+      const msg = m.message || m
+      if (msg.role === 'user' || msg.role === 'assistant') {
+        messageCount++
+      }
+    }
+
+    console.log('[SessionTree] Message count:', messageCount, 'Model:', model)
+
+    // Parse session ID from file path
+    const pathParts = filePath.split(/[/\\]/)
+    const fileName = pathParts[pathParts.length - 1] || ''
+    const sessionId = fileName.replace('.jsonl', '').split('_')[1] || fileName
+
     return {
-      sessionId: sessionHeader.id || '',
+      sessionId,
       timestamp,
-      cwd: sessionHeader.cwd || '',
-      name: name || sessionHeader.name || sessionHeader.sessionName || undefined,
-      model: sessionHeader.model?.modelId || sessionHeader.modelId || undefined,
-      provider: sessionHeader.model?.provider || sessionHeader.provider || undefined,
-      messageCount: messages.filter((m: any) => m.role === 'user' || m.role === 'assistant').length
+      cwd: '', // cwd is stored in directory name, not in messages
+      name,
+      model,
+      provider,
+      messageCount
     }
   } catch (e) {
-    console.warn('[SessionTree] Failed to read session metadata:', filePath, e)
+    console.error('[SessionTree] Failed to read session metadata:', filePath, e)
     return null
   }
 }
 
+let isLoadingSessions = false
+
 async function loadSessions() {
+  // Prevent concurrent loading
+  if (isLoadingSessions) return
+  isLoadingSessions = true
+  
   isLoading.value = true
   error.value = null
+  
   try {
+    // Clear existing sessions first to avoid duplicates
+    sessionStore.sessions = []
+    
     // Scan pi's session directory directly
     const homeDir = await piGetHomeDir().catch(() => '')
     if (homeDir) {
@@ -153,47 +207,54 @@ async function loadSessions() {
           if (projectDir.type === 'directory' && projectDir.children) {
             for (const sessionFile of projectDir.children) {
               if (sessionFile.name?.endsWith('.jsonl')) {
-                const existing = sessionStore.sessions.find(s => s.path === sessionFile.path)
-                if (!existing) {
-                  // Parse session file name: timestamp_sessionId.jsonl
-                  const nameParts = sessionFile.name.replace('.jsonl', '').split('_')
-                  const timestamp = nameParts[0] || ''
-                  const sessionId = nameParts[1] || sessionFile.name
-                  
-                  // Normalize filename timestamp: 2026-06-25T04-13-35-582Z → 2026-06-25T04:13:35.582Z
-                  const normalizedTs = timestamp.replace(
-                    /(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z/,
-                    '$1:$2:$3.$4Z'
-                  )
-                  
-                  // Read metadata from the session file
-                  const metadata = await readSessionMetadata(sessionFile.path)
-                  
-                  // Format project path for display
-                  const projectPath = projectDir.name?.replace(/--/g, ':\\').replace(/-/g, '/') || ''
-                  
-                  sessionStore.sessions.push({
-                    id: sessionId,
-                    path: sessionFile.path,
-                    name: metadata?.name || projectPath || sessionId,
-                    cwd: metadata?.cwd || projectPath || '',
-                    createdAt: metadata?.timestamp || normalizedTs,
-                    messageCount: metadata?.messageCount || 0,
-                    // Store additional metadata for display
-                    provider: metadata?.provider,
-                    model: metadata?.model,
-                  } as any)
-                }
+                // Parse session file name: timestamp_sessionId.jsonl
+                const nameParts = sessionFile.name.replace('.jsonl', '').split('_')
+                const timestamp = nameParts[0] || ''
+                const sessionId = nameParts[1] || sessionFile.name
+                
+                // Normalize filename timestamp: 2026-06-25T04-13-35-582Z → 2026-06-25T04:13:35.582Z
+                const normalizedTs = timestamp.replace(
+                  /(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d{3})Z/,
+                  '$1:$2:$3.$4Z'
+                )
+                
+                // Read metadata from the session file with timeout
+                const metadataPromise = readSessionMetadata(sessionFile.path)
+                const timeoutPromise = new Promise<null>((resolve) => 
+                  setTimeout(() => resolve(null), 2000)
+                )
+                const metadata = await Promise.race([metadataPromise, timeoutPromise])
+                
+                // Format project path for display
+                const projectPath = projectDir.name?.replace(/--/g, ':\\').replace(/-/g, '/') || ''
+                
+                sessionStore.sessions.push({
+                  id: sessionId,
+                  path: sessionFile.path,
+                  name: metadata?.name || projectPath || sessionId,
+                  cwd: metadata?.cwd || projectPath || '',
+                  createdAt: metadata?.timestamp || normalizedTs,
+                  messageCount: metadata?.messageCount || 0,
+                  provider: metadata?.provider,
+                  model: metadata?.model,
+                } as any)
               }
             }
           }
         }
+        
+        // Sort sessions by time (newest first)
+        sessionStore.sessions.sort((a, b) => 
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        )
       }
     }
   } catch (e) {
+    console.error('[SessionTree] loadSessions error:', e)
     error.value = String(e)
   } finally {
     isLoading.value = false
+    isLoadingSessions = false
   }
 }
 
@@ -203,19 +264,31 @@ async function createNewSession() {
 }
 
 async function switchToSession(path: string) {
-  await piSwitchSession(path)
-  chatStore.clearMessages()
-  piGetSessionStats()
+  // Find the session object by path
+  const session = sessionStore.sessions.find(s => s.path === path)
+  if (session) {
+    await openSession(session)
+  }
 }
 
 async function openSession(session: any) {
   if (!session.path) return
   try {
+    // Switch backend session first
+    await piSwitchSession(session.path)
+    
     const data = await piReadSession(session.path)
-    if (!data?.messages?.length) return
     chatStore.clearMessages()
-    for (const msg of data.messages) {
-      chatStore.addMessage(msg)
+    
+    // Handle both formats: array of messages (JSONL) or object with messages array
+    const messages = Array.isArray(data) ? data : (data?.messages || [])
+    
+    if (messages.length > 0) {
+      for (const msg of messages) {
+        // Extract actual message content from JSONL format
+        const actualMsg = msg.message || msg
+        chatStore.addMessage(actualMsg)
+      }
     }
     // Update current session in store
     sessionStore.currentSessionId = session.id
@@ -233,10 +306,28 @@ async function forkSession(entryId: string) {
   chatStore.clearMessages()
 }
 
-async function deleteSession(session: any) {
-  const confirmed = window.confirm(`Delete session "${session.name || session.id}"?`)
-  if (!confirmed) return
+async function deleteSession(session: any, event: Event) {
+  // Stop event propagation immediately
+  event.stopPropagation()
+  event.preventDefault()
+  
+  const sessionName = session.name || session.id.slice(0, 30) + '...'
+  const messageCount = session.messageCount || 0
+  
   try {
+    // Use Tauri 2 dialog API with ask()
+    const confirmed = await ask(
+      `${messageCount} 条消息\n\n此操作不可撤销，确定要删除吗？`,
+      {
+        title: `⚠️ 确认删除 "${sessionName}"`,
+        kind: 'warning',
+        okLabel: '删除',
+        cancelLabel: '取消'
+      }
+    )
+    
+    if (!confirmed) return
+    
     await piDeleteFile(session.path)
     // Remove from local list
     const idx = sessionStore.sessions.findIndex(s => s.id === session.id)
@@ -245,7 +336,17 @@ async function deleteSession(session: any) {
     }
   } catch (e) {
     console.error('[SessionTree] Failed to delete session:', e)
-    alert(`Failed to delete session: ${e}`)
+    // Fallback to window.confirm
+    const confirmed = window.confirm(
+      `⚠️ 确认删除 Session\n\n"${sessionName}"\n${messageCount} 条消息\n\n此操作不可撤销，确定要删除吗？`
+    )
+    if (confirmed) {
+      await piDeleteFile(session.path)
+      const idx = sessionStore.sessions.findIndex(s => s.id === session.id)
+      if (idx !== -1) {
+        sessionStore.sessions.splice(idx, 1)
+      }
+    }
   }
 }
 
@@ -326,18 +427,18 @@ onMounted(() => {
         <!-- Actions -->
         <div class="session-actions">
           <button
-            class="btn-session-action delete"
-            title="Delete Session"
-            @click.stop="deleteSession(session)"
-          >
-            🗑️
-          </button>
-          <button
-            class="btn-session-action"
+            class="btn-session-action btn-fork"
             title="Fork Session"
             @click.stop="forkSession(session.id)"
           >
             🍴
+          </button>
+          <button
+            class="btn-session-action btn-delete"
+            title="Delete Session"
+            @click="deleteSession(session, $event)"
+          >
+            🗑️
           </button>
         </div>
       </div>
@@ -507,8 +608,8 @@ onMounted(() => {
   background: none;
   border: none;
   border-radius: 4px;
-  padding: 2px 4px;
-  font-size: 12px;
+  padding: 3px 5px;
+  font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
   line-height: 1;
@@ -516,6 +617,16 @@ onMounted(() => {
 
 .btn-session-action:hover {
   background: var(--hover-bg);
+}
+
+.btn-delete:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.btn-fork:hover {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
 }
 
 /* Drag and Drop */

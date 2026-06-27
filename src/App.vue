@@ -149,10 +149,8 @@ onMounted(async () => {
       }, delay)
     })
     
-    // Lazy-load models in background (slow network call, don't block startup)
-    piGetAvailableModels()
-      .then(models => settingsStore.setAvailableModels(models))
-      .catch(e => console.warn('[PiGUI] load models failed (will retry on /model):', e))
+    // Note: Models are NOT auto-loaded on startup to prevent UI blocking
+    // User can click "Refresh List" in model picker to load models when needed
   } catch (e) {
     console.error('[PiGUI] Failed to auto-start pi:', e)
     // Don't show error to user, they can start manually

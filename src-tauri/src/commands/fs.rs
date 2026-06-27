@@ -89,14 +89,30 @@ async fn read_dir_recursive(
 }
 
 /// Read session file content (async).
+/// Handles both JSONL format (one JSON per line) and regular JSON array.
 #[tauri::command]
 pub async fn pi_read_session(path: String) -> Result<serde_json::Value, String> {
     let content = tokio::fs::read_to_string(&path)
         .await
         .map_err(|e| format!("Failed to read session: {}", e))?;
     
-    let session: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse session JSON: {}", e))?;
+    // First, try to parse as regular JSON (array or object)
+    if let Ok(session) = serde_json::from_str::<serde_json::Value>(&content) {
+        return Ok(session);
+    }
     
-    Ok(session)
+    // If that fails, try JSONL format (one JSON object per line)
+    let mut messages = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(msg) => messages.push(msg),
+            Err(e) => eprintln!("Warning: Failed to parse session line: {}", e),
+        }
+    }
+    
+    Ok(serde_json::Value::Array(messages))
 }

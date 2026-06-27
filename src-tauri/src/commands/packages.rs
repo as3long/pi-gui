@@ -23,9 +23,17 @@ pub async fn pi_install_package(source: String) -> Result<serde_json::Value, Str
         c
     };
     
+    // Hide console window on Windows
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    
     let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("Failed to spawn install process: {}", e))?;
     
@@ -101,6 +109,13 @@ pub async fn pi_list_packages() -> Result<Vec<String>, String> {
         c.args(&["list-packages"]);
         c
     };
+    
+    // Hide console window on Windows
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
     
     let output = cmd
         .output()

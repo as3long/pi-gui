@@ -10,6 +10,7 @@ const sessionStore = useSessionStore()
 const isOpen = ref(false)
 const searchQuery = ref('')
 const dropdownRef = ref<HTMLElement | null>(null)
+const isRefreshing = ref(false)
 
 const thinkingLevels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
 
@@ -72,12 +73,25 @@ async function selectModel(provider: string, modelId: string) {
 
 async function refreshModels() {
   console.log('[ModelPicker] Refreshing models...')
+  isRefreshing.value = true
   try {
-    const models = await piGetAvailableModels()
+    // Add timeout on frontend side too (20 seconds)
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Timeout after 20 seconds')), 20000)
+    })
+    
+    const models = await Promise.race([
+      piGetAvailableModels(),
+      timeoutPromise
+    ]) as any[]
+    
     console.log('[ModelPicker] Got models:', models.length)
     settingsStore.setAvailableModels(models)
   } catch (e) {
     console.error('[ModelPicker] Failed to refresh models:', e)
+    // Don't show alert to avoid blocking UI, just log
+  } finally {
+    isRefreshing.value = false
   }
 }
 
@@ -90,10 +104,8 @@ function toggleDropdown() {
   isOpen.value = !isOpen.value
   if (isOpen.value) {
     searchQuery.value = ''
-    // Only refresh if models haven't been loaded yet (background, no await)
-    if (settingsStore.availableModels.length === 0) {
-      refreshModels()
-    }
+    // Don't auto-refresh - let user click "Refresh" button manually
+    // This prevents unexpected UI blocking when opening the dropdown
   }
 }
 
@@ -138,8 +150,14 @@ onUnmounted(() => {
 
       <!-- Quick Actions -->
       <div class="dropdown-actions">
-        <button class="action-btn" @click="refreshModels" title="Refresh model list">
-          📋 Refresh
+        <button 
+          class="action-btn" 
+          :class="{ loading: isRefreshing }"
+          @click="refreshModels" 
+          :title="isRefreshing ? 'Refreshing...' : 'Refresh model list'"
+          :disabled="isRefreshing"
+        >
+          {{ isRefreshing ? '⏳' : '📋' }} Refresh
         </button>
       </div>
 
@@ -298,6 +316,15 @@ onUnmounted(() => {
 .action-btn:hover {
   border-color: var(--accent-color);
   color: var(--accent-color);
+}
+
+.action-btn.loading {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.action-btn:disabled {
+  pointer-events: none;
 }
 
 .dropdown-section {
