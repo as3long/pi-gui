@@ -206,7 +206,17 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  let isFinalizing = false
+  
   function finalizeStreaming() {
+    // Prevent double finalization
+    if (isFinalizing || streamingMessage.value.isComplete) {
+      console.log('[ChatStore] Skipping finalize - already finalized or finalizing')
+      return
+    }
+    isFinalizing = true
+    console.log('[ChatStore] finalizeStreaming called')
+    
     // Flush any remaining buffered content first
     flushBufferedStreaming()
     if (streamingThrottleTimer) {
@@ -306,6 +316,7 @@ export const useChatStore = defineStore('chat', () => {
       toolCalls: [],
       isComplete: true,
     }
+    isFinalizing = false
   }
 
   function clearMessages() {
@@ -423,10 +434,16 @@ export const useChatStore = defineStore('chat', () => {
       case 'message_end': {
         console.log('[ChatStore] Message end received')
         const endMsg = (event as any).message
+        
+        // Capture the full message content if available
         if (endMsg?.role === 'assistant' && Array.isArray(endMsg.content)) {
-          // Capture tool calls from final message if streaming didn't get them
+          // Update streaming message with final content
           for (const c of endMsg.content) {
-            if (c.type === 'toolCall' && c.id && !streamingMessage.value.toolCalls.find(t => t.id === c.id)) {
+            if (c.type === 'text' && c.text) {
+              streamingMessage.value.text = c.text
+            } else if (c.type === 'thinking' && c.thinking) {
+              streamingMessage.value.thinking = c.thinking
+            } else if (c.type === 'toolCall' && c.id && !streamingMessage.value.toolCalls.find(t => t.id === c.id)) {
               console.log('[ChatStore] Capturing tool call from message_end:', c.name, c.id)
               streamingMessage.value.toolCalls.push({
                 id: c.id,
@@ -437,6 +454,10 @@ export const useChatStore = defineStore('chat', () => {
               })
             }
           }
+          
+          // Finalize this message (add to messages array)
+          console.log('[ChatStore] Finalizing from message_end')
+          finalizeStreaming()
         }
         break
       }
