@@ -136,6 +136,7 @@ impl PiRpcClient {
             while running_for_stdin.load(Ordering::SeqCst) {
                 match stdin_rx.recv_timeout(Duration::from_millis(100)) {
                     Ok(StdinMessage::Command(json)) => {
+                        eprintln!("[PiGUI] Writing to stdin: {}", &json[..json.len().min(100)]);
                         if let Err(e) = writeln!(stdin, "{}", json) {
                             eprintln!("[PiGUI] Failed to write to stdin: {}", e);
                             break;
