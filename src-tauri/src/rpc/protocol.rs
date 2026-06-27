@@ -24,6 +24,7 @@ pub enum RpcCommand {
     Compact(CompactCommand),
     SetAutoCompaction(SetAutoCompactionCommand),
     Bash(BashCommand),
+    ExtensionUIResponse(ExtensionUIResponseCommand),
 }
 
 macro_rules! rpc_command {
@@ -160,6 +161,27 @@ rpc_command!(NewSessionCommand {
     parent_session: Option<String>,
 }, "new_session");
 rpc_command!(GetSessionStatsCommand {}, "get_session_stats");
+
+#[derive(Debug, Serialize)]
+pub struct ExtensionUIResponseCommand {
+    pub r#type: String,
+    pub id: String,
+    pub value: Option<String>,
+    pub confirmed: Option<bool>,
+    pub cancelled: Option<bool>,
+}
+
+impl ExtensionUIResponseCommand {
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            r#type: "extension_ui_response".into(),
+            id: id.into(),
+            value: None,
+            confirmed: None,
+            cancelled: None,
+        }
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
