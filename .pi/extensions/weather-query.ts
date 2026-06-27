@@ -15,17 +15,20 @@
  *   Or use with pi: pi -e ./weather-query.ts
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-// Weather tool parameters schema
-const WeatherParams = Type.Object({
-  city: Type.String({ description: "City name in English or pinyin (e.g., Beijing, Shanghai, Ezhou)" }),
-  forecast: Type.Optional(Type.Boolean({ description: "Get detailed forecast including future days (default: false)" })),
-  brief: Type.Optional(Type.Boolean({ description: "Get brief current weather only (default: false)" })),
-});
+// Weather tool parameters schema (native JSON Schema)
+const WeatherParams = {
+  type: "object",
+  properties: {
+    city: { type: "string", description: "City name in English or pinyin (e.g., Beijing, Shanghai, Ezhou)" },
+    forecast: { type: "boolean", description: "Get detailed forecast including future days (default: false)", default: false },
+    brief: { type: "boolean", description: "Get brief current weather only (default: false)", default: false },
+  },
+  required: ["city"],
+};
 
-type WeatherParamsType = Static<typeof WeatherParams>;
+type WeatherParamsType = { city: string; forecast?: boolean; brief?: boolean };
 
 // Helper function to remove ANSI color codes
 function removeAnsiCodes(text: string): string {
