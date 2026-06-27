@@ -255,12 +255,12 @@ export default function (pi: ExtensionAPI) {
         const formattedResponse = formatWeatherResponse(rawWeather, city, false, false);
         
         // Use ctx.send to display the result in chat
-        ctx.ui.notify(formattedResponse, "info");
+        pi.sendMessage({ customType: "weather-result", content: formattedResponse, display: true });
         
         ctx.ui.setStatus("weather", "");
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        ctx.ui.notify(`❌ 无法获取 ${city} 的天气信息: ${errorMessage}`, "error");
+        pi.sendMessage({ customType: "weather-error", content: `❌ 无法获取 ${city} 的天气信息: ${errorMessage}`, display: true });
         ctx.ui.setStatus("weather", "");
       }
     },
