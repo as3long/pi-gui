@@ -1,3 +1,4 @@
+
 use crate::rpc::protocol::*;
 use crate::state::AppState;
 use std::env;
@@ -10,7 +11,13 @@ pub async fn pi_set_model(
     provider: String,
     model_id: String,
 ) -> Result<(), String> {
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let cmd = RpcCommand::SetModel(SetModelCommand::new("set-model", provider, model_id));
     rpc.send_command(&cmd)
 }
@@ -18,7 +25,13 @@ pub async fn pi_set_model(
 /// Cycle to the next available model (async).
 #[tauri::command]
 pub async fn pi_cycle_model(state: State<'_, AppState>) -> Result<(), String> {
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let cmd = RpcCommand::CycleModel(CycleModelCommand::new("cycle-model"));
     rpc.send_command(&cmd)
 }
@@ -116,7 +129,13 @@ pub async fn pi_set_thinking_level(
     state: State<'_, AppState>,
     level: String,
 ) -> Result<(), String> {
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let cmd = RpcCommand::SetThinkingLevel(SetThinkingLevelCommand::new("set-thinking", level));
     rpc.send_command(&cmd)
 }

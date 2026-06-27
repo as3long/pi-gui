@@ -1,3 +1,4 @@
+
 use crate::rpc::protocol::*;
 use crate::state::AppState;
 use tauri::State;
@@ -68,7 +69,13 @@ pub async fn pi_send_user_message(
         .unwrap_or("")
         .to_string();
     
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let cmd = RpcCommand::Prompt(PromptCommand::new("session-prompt", message));
     rpc.send_command(&cmd)
 }
@@ -79,7 +86,13 @@ pub async fn pi_cancel_current_run(
     state: State<'_, AppState>,
     _session_ref: Value,
 ) -> Result<(), String> {
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let cmd = RpcCommand::Abort(AbortCommand::new("session-abort"));
     rpc.send_command(&cmd)
 }
@@ -100,7 +113,13 @@ pub async fn pi_set_session_model(
         .unwrap_or("")
         .to_string();
     
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let cmd = RpcCommand::SetModel(SetModelCommand::new("session-set-model", provider, model_id));
     rpc.send_command(&cmd)
 }
@@ -112,7 +131,13 @@ pub async fn pi_set_session_thinking_level(
     _session_ref: Value,
     thinking_level: String,
 ) -> Result<(), String> {
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let cmd = RpcCommand::SetThinkingLevel(SetThinkingLevelCommand::new("session-thinking", thinking_level));
     rpc.send_command(&cmd)
 }
@@ -134,7 +159,13 @@ pub async fn pi_compact_session(
     _session_ref: Value,
     _custom_instructions: Option<String>,
 ) -> Result<(), String> {
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let cmd = RpcCommand::Compact(CompactCommand::new("compact"));
     rpc.send_command(&cmd)
 }
@@ -188,7 +219,13 @@ pub async fn pi_respond_to_host_ui_request(
     let confirmed = response.get("confirmed").and_then(|v| v.as_bool());
     let cancelled = response.get("cancelled").and_then(|v| v.as_bool());
     
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let ui_response = ExtensionUiResponse {
         r#type: "extension_ui_response".into(),
         id,

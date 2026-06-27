@@ -1,3 +1,4 @@
+
 use crate::state::AppState;
 use tauri::{AppHandle, State};
 
@@ -12,7 +13,13 @@ pub async fn pi_start(
     cwd: String,
 ) -> Result<(), String> {
     // Acquire async mutex lock - this will yield to runtime instead of blocking
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     
     let result = rpc.spawn(&cwd, app);
     
@@ -26,7 +33,13 @@ pub async fn pi_start(
 /// Stop the pi subprocess (async).
 #[tauri::command]
 pub async fn pi_stop(state: State<'_, AppState>) -> Result<(), String> {
-    let mut rpc = state.rpc.lock().await;
+    let mut rpc = match tokio::time::timeout(
+                std::time::Duration::from_millis(100),
+                state.rpc.lock()
+            ).await {
+                Ok(rpc) => rpc,
+                _ => return Err("Lock timeout".to_string()),
+            };
     let result = rpc.kill();
     
     if result.is_ok() {

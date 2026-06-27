@@ -3,7 +3,7 @@ use crate::state::AppState;
 use tauri::State;
 
 /// Helper: try to send command with timeout, fallback to error
-async fn send_with_timeout(state: &State<'_, AppState>, cmd: RpcCommand) -> Result<(), String> {
+pub async fn send_with_timeout(state: &State<'_, AppState>, cmd: RpcCommand) -> Result<(), String> {
     // Use try_lock first to avoid blocking
     match state.rpc.try_lock() {
         Ok(mut rpc) => {

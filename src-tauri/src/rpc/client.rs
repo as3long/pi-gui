@@ -1,11 +1,19 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Sender, Receiver};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use super::protocol::*;
+
+/// Message to send to stdin writer thread
+enum StdinMessage {
+    Command(String),
+    Quit,
+}
 
 /// Find pi executable in PATH
 fn find_pi() -> Option<String> {
@@ -33,8 +41,10 @@ fn find_pi() -> Option<String> {
 #[derive(Default)]
 pub struct PiRpcClient {
     process: Option<Child>,
+    #[allow(dead_code)]
     stdin: Option<std::process::ChildStdin>,
     running: Arc<AtomicBool>,
+    stdin_sender: Option<Sender<StdinMessage>>,
 }
 
 impl PiRpcClient {
@@ -43,6 +53,7 @@ impl PiRpcClient {
             process: None,
             stdin: None,
             running: Arc::new(AtomicBool::new(false)),
+            stdin_sender: None,
         }
     }
 
@@ -112,8 +123,38 @@ impl PiRpcClient {
         let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
         self.process = Some(child);
-        self.stdin = Some(stdin);
         self.running.store(true, Ordering::SeqCst);
+
+        // Create channel for async stdin writes
+        let (stdin_tx, stdin_rx): (Sender<StdinMessage>, Receiver<StdinMessage>) = mpsc::channel();
+        self.stdin_sender = Some(stdin_tx);
+
+        // Spawn background thread for stdin writes (non-blocking)
+        let running_for_stdin = self.running.clone();
+        thread::spawn(move || {
+            let mut stdin = stdin;
+            while running_for_stdin.load(Ordering::SeqCst) {
+                match stdin_rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(StdinMessage::Command(json)) => {
+                        if let Err(e) = writeln!(stdin, "{}", json) {
+                            eprintln!("[PiGUI] Failed to write to stdin: {}", e);
+                            break;
+                        }
+                        if let Err(e) = stdin.flush() {
+                            eprintln!("[PiGUI] Failed to flush stdin: {}", e);
+                            break;
+                        }
+                    }
+                    Ok(StdinMessage::Quit) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        break;
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        continue;
+                    }
+                }
+            }
+            eprintln!("[PiGUI] Stdin writer thread exiting");
+        });
 
         // Start event reader thread
         let running = self.running.clone();
@@ -137,30 +178,28 @@ impl PiRpcClient {
     }
 
     pub fn send_command(&mut self, command: &RpcCommand) -> Result<(), String> {
-        let stdin = self.stdin.as_mut().ok_or("pi stdin not available")?;
+        let sender = self.stdin_sender.as_ref().ok_or("stdin channel not available")?;
 
         let json = serde_json::to_string(command)
             .map_err(|e| format!("Failed to serialize command: {}", e))?;
 
-        writeln!(stdin, "{}", json)
-            .map_err(|e| format!("Failed to write to pi stdin: {}", e))?;
-        stdin.flush()
-            .map_err(|e| format!("Failed to flush pi stdin: {}", e))?;
-
+        // Non-blocking send to background thread
+        sender.send(StdinMessage::Command(json))
+            .map_err(|e| format!("Failed to send to stdin writer: {}", e))?;
+        
         Ok(())
     }
 
     pub fn send_extension_ui_response(&mut self, response: &ExtensionUiResponse) -> Result<(), String> {
-        let stdin = self.stdin.as_mut().ok_or("pi stdin not available")?;
+        let sender = self.stdin_sender.as_ref().ok_or("stdin channel not available")?;
 
         let json = serde_json::to_string(response)
             .map_err(|e| format!("Failed to serialize extension UI response: {}", e))?;
 
-        writeln!(stdin, "{}", json)
-            .map_err(|e| format!("Failed to write extension UI response: {}", e))?;
-        stdin.flush()
-            .map_err(|e| format!("Failed to flush pi stdin: {}", e))?;
-
+        // Non-blocking send to background thread
+        sender.send(StdinMessage::Command(json))
+            .map_err(|e| format!("Failed to send to stdin writer: {}", e))?;
+        
         Ok(())
     }
 
@@ -170,6 +209,10 @@ impl PiRpcClient {
 
     pub fn kill(&mut self) -> Result<(), String> {
         self.running.store(false, Ordering::SeqCst);
+        // Send quit signal to stdin writer thread
+        if let Some(sender) = self.stdin_sender.take() {
+            let _ = sender.send(StdinMessage::Quit);
+        }
         self.stdin = None;
         if let Some(mut process) = self.process.take() {
             // Windows: Use taskkill to kill entire process tree
