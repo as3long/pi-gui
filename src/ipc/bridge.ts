@@ -301,13 +301,13 @@ export async function startEventListeners(): Promise<() => void> {
           id: req.id
         }, null, 2))
         
-        // Handle notify method - show toast notification
+        // Handle notify method - show toast notification via window
         if (req.method === 'notify' && req.message) {
           console.log('[PiGUI] Showing notify toast:', req.message)
-          // Import notify function dynamically to avoid circular dependency
-          import('../../utils/notify').then(({ notifyInfo }) => {
-            notifyInfo(req.message)
-          })
+          // Use window.__piNotify set by ToastContainer
+          if ((window as any).__piNotify) {
+            (window as any).__piNotify('info', req.message)
+          }
           return
         }
         

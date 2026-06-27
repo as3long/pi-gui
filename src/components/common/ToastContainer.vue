@@ -35,6 +35,8 @@ defineExpose({ addToast })
 onMounted(() => {
   // Register global notify function
   setNotifyFn(addToast)
+  // Expose to window for bridge.ts
+  ;(window as any).__piNotify = addToast
 })
 
 onUnmounted(() => {
