@@ -12,7 +12,7 @@ interface Toast {
 const toasts = ref<Toast[]>([])
 let nextId = 0
 
-function addToast(type: Toast['type'], message: string, duration = 3000) {
+function addToast(type: Toast['type'], message: string, duration = 8000) {
   const id = nextId++
   toasts.value.push({ id, type, message, duration })
   
