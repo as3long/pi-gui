@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { shallowRef, ref, computed, watch } from 'vue'
 import { useSettingsStore } from './settings'
 import { piGetSessionStats } from '../ipc/bridge'
 import type {
@@ -16,9 +16,6 @@ import type {
   SessionTreeNodeSnapshot,
 } from '../ipc/types'
 
-const STORAGE_KEY_WORKSPACE = 'pi-gui:currentWorkspace'
-const STORAGE_KEY_SESSION = 'pi-gui:currentSession'
-
 /**
  * Session store manages pi session lifecycle, workspace, and UI state.
  */
@@ -28,7 +25,8 @@ export const useSessionStore = defineStore('session', () => {
   const currentWorkspace = ref<WorkspaceRef | null>(null)
 
   // ── Session State ──
-  const sessions = ref<SessionInfo[]>([])
+  // Use shallowRef for large lists to reduce reactivity overhead
+  const sessions = shallowRef<SessionInfo[]>([])
   const sessionSnapshots = ref<Map<string, SessionSnapshot>>(new Map())
   const currentSessionId = ref<string | null>(null)
   const currentSessionFile = ref<string | null>(null)
@@ -299,7 +297,7 @@ export const useSessionStore = defineStore('session', () => {
   function addSession(session: SessionInfo) {
     const existing = sessions.value.find(s => s.id === session.id)
     if (!existing) {
-      sessions.value.push(session)
+      sessions.value = [...sessions.value, session]
     }
   }
 

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { shallowRef, ref, computed, watch } from 'vue'
 import type {
   AgentMessage,
   AssistantMessage,
@@ -16,7 +16,8 @@ const STREAMING_THROTTLE_MS = 16
  */
 export const useChatStore = defineStore('chat', () => {
   // ── State ──
-  const messages = ref<AgentMessage[]>(loadMessages())
+  // Use shallowRef for large arrays to avoid deep reactivity overhead
+  const messages = shallowRef<AgentMessage[]>(loadMessages())
   const isStreaming = ref(false)
   const isCompacting = ref(false)
   const isRetrying = ref(false)
@@ -87,7 +88,7 @@ export const useChatStore = defineStore('chat', () => {
   // ── Actions ──
 
   function addMessage(msg: AgentMessage) {
-    messages.value.push(msg)
+    messages.value = [...messages.value, msg]
   }
 
   function flushBufferedStreaming() {
@@ -214,6 +215,7 @@ export const useChatStore = defineStore('chat', () => {
     // 2. For each tool call: assistant toolCall → toolResult
     const toolCalls = streamingMessage.value.toolCalls
     const addedTcIds = new Set<string>()
+    const newMessages: AgentMessage[] = []
 
     // First, add the text/thinking part as one assistant message (if there's content)
     const headerContent: MessageContent[] = []
@@ -237,14 +239,14 @@ export const useChatStore = defineStore('chat', () => {
       addedTcIds.add(firstTc.id)
 
       console.log('[ChatStore] Content to add:', headerContent.length, 'items')
-      messages.value.push({
+      newMessages.push({
         role: 'assistant',
         content: headerContent,
       })
 
       // Add result for the first tool call
       if (firstTc.result) {
-        messages.value.push({
+        newMessages.push({
           role: 'toolResult',
           toolCallId: firstTc.id,
           toolName: firstTc.name,
@@ -255,7 +257,7 @@ export const useChatStore = defineStore('chat', () => {
     } else if (headerContent.length > 0) {
       // No tool calls, just text/thinking
       console.log('[ChatStore] Content to add:', headerContent.length, 'items')
-      messages.value.push({
+      newMessages.push({
         role: 'assistant',
         content: headerContent,
       })
@@ -267,7 +269,7 @@ export const useChatStore = defineStore('chat', () => {
       addedTcIds.add(tc.id)
 
       // Assistant message with just this tool call
-      messages.value.push({
+      newMessages.push({
         role: 'assistant',
         content: [{
           type: 'toolCall',
@@ -279,7 +281,7 @@ export const useChatStore = defineStore('chat', () => {
 
       // Tool result
       if (tc.result) {
-        messages.value.push({
+        newMessages.push({
           role: 'toolResult',
           toolCallId: tc.id,
           toolName: tc.name,
@@ -287,6 +289,11 @@ export const useChatStore = defineStore('chat', () => {
           isError: tc.isError,
         })
       }
+    }
+
+    // Batch update all messages at once (better for shallowRef)
+    if (newMessages.length > 0) {
+      messages.value = [...messages.value, ...newMessages]
     }
 
     // Reset streaming state
@@ -299,7 +306,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearMessages() {
-    messages.value = []
+    messages.value = [] // shallowRef assignment triggers update
     // Clear the debounced timeout if any
     if (saveTimeout) {
       clearTimeout(saveTimeout)

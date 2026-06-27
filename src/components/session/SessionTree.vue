@@ -229,7 +229,7 @@ async function loadSessions() {
                 // Format project path for display
                 const projectPath = projectDir.name?.replace(/--/g, ':\\').replace(/-/g, '/') || ''
                 
-                sessionStore.sessions.push({
+                sessionStore.sessions = [...sessionStore.sessions, {
                   id: sessionId,
                   path: sessionFile.path,
                   name: metadata?.name || projectPath || sessionId,
@@ -238,7 +238,7 @@ async function loadSessions() {
                   messageCount: metadata?.messageCount || 0,
                   provider: metadata?.provider,
                   model: metadata?.model,
-                } as any)
+                } as any]
               }
             }
           }
@@ -330,11 +330,8 @@ async function deleteSession(session: any, event: Event) {
     if (!confirmed) return
     
     await piDeleteFile(session.path)
-    // Remove from local list
-    const idx = sessionStore.sessions.findIndex(s => s.id === session.id)
-    if (idx !== -1) {
-      sessionStore.sessions.splice(idx, 1)
-    }
+    // Remove from local list (shallowRef requires reassignment)
+    sessionStore.sessions = sessionStore.sessions.filter(s => s.id !== session.id)
   } catch (e) {
     console.error('[SessionTree] Failed to delete session:', e)
     // Fallback to window.confirm
@@ -343,10 +340,7 @@ async function deleteSession(session: any, event: Event) {
     )
     if (confirmed) {
       await piDeleteFile(session.path)
-      const idx = sessionStore.sessions.findIndex(s => s.id === session.id)
-      if (idx !== -1) {
-        sessionStore.sessions.splice(idx, 1)
-      }
+      sessionStore.sessions = sessionStore.sessions.filter(s => s.id !== session.id)
     }
   }
 }

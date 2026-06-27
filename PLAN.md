@@ -60,7 +60,9 @@
 | config.rs | 改 tokio::fs | ✅ |
 | settings.ts | localStorage 防抖 100ms | ✅ |
 
-### Phase 3: 性能提升 (中期)
-| 文件 | 修复内容 | 预期效果 |
-|------|---------|---------|
-| stores/*.ts | Web Worker 解析 | JS 主线程不阻塞 |
+### Phase 3: ✅ 性能提升 (已完成)
+| 文件 | 修复内容 | 状态 |
+|------|---------|------|
+| chat.ts | shallowRef messages + 批量更新 | ✅ |
+| session.ts | shallowRef sessions | ✅ |
+| SessionTree.vue | 适配 shallowRef 更新 | ✅ |
