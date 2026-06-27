@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { piGetAgentAuth, piSetAgentAuth, piGetAgentSettings, piListPackages, piInstallPackage } from '../../ipc/bridge'
+import { notifySuccess, notifyError } from '../../utils/notify'
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -59,10 +60,10 @@ async function installVolcengineProvider() {
     await piInstallPackage('npm:pi-volcengine-provider')
     // Refresh package list after installation
     installedPackages.value = await piListPackages()
-    alert('pi-volcengine-provider installed successfully!')
+    notifySuccess('pi-volcengine-provider installed successfully!')
   } catch (e) {
     console.error('Failed to install pi-volcengine-provider:', e)
-    alert(`Failed to install: ${e}`)
+    notifyError(`Failed to install: ${e}`)
   } finally {
     isInstalling.value = false
   }
@@ -82,10 +83,10 @@ async function saveAuth() {
     await piSetAgentAuth(newAuth)
     authData.value = newAuth
     apiKeyInput.value = ''
-    alert('API key saved successfully!')
+    notifySuccess('API key saved successfully!')
   } catch (e) {
     console.error('Failed to save auth:', e)
-    alert(`Failed to save: ${e}`)
+    notifyError(`Failed to save: ${e}`)
   } finally {
     isLoading.value = false
   }
@@ -105,7 +106,7 @@ async function deleteAuth(provider: string) {
     }
   } catch (e) {
     console.error('Failed to delete auth:', e)
-    alert(`Failed to delete: ${e}`)
+    notifyError(`Failed to delete: ${e}`)
   } finally {
     isLoading.value = false
   }

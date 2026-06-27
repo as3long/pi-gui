@@ -11,6 +11,8 @@ import { FileTree } from './components/files'
 import { startEventListeners, clearEventHandlers, onPiEvent, piNewSession, piCycleModel, piStart, piGetState, piReadDirectory, piIsRunning, piDeleteFile, piGetSessionStats, piAbort } from './ipc/bridge'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { useChatStore } from './stores/chat'
+import ToastContainer from './components/common/ToastContainer.vue'
+import { notifyError } from './utils/notify'
 import CodeEditor from './components/editor/CodeEditor.vue'
 
 const settingsStore = useSettingsStore()
@@ -228,7 +230,7 @@ async function saveFile() {
     console.log('[PiGUI] File saved successfully:', openFile.value.path)
   } catch (e) {
     console.error('[PiGUI] Failed to save file:', e)
-    alert(`Failed to save file: ${e}`)
+    notifyError(`Failed to save file: ${e}`)
   }
 }
 
@@ -286,7 +288,7 @@ async function handleFileDelete(file: any) {
     console.log('[PiGUI] Deleted:', file.path)
   } catch (e) {
     console.error('[PiGUI] Failed to delete file:', e)
-    alert(`Failed to delete: ${e}`)
+    notifyError(`Failed to delete: ${e}`)
   }
 }
 
@@ -323,7 +325,8 @@ async function handleReconnect() {
 </script>
 
 <template>
-  <div class="app-layout">
+  <ToastContainer />
+<div class="app-layout">
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="sidebar-header">

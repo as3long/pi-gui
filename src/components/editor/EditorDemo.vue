@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { CodeEditor } from '../editor'
+import { notifySuccess } from '../../utils/notify'
 
 const code = ref(`// Welcome to Pi GUI Code Editor!
 // This is a CodeMirror 6 integration
@@ -27,7 +28,7 @@ const theme = ref<'light' | 'dark'>('dark')
 
 function handleSave(value: string) {
   console.log('Saved:', value)
-  alert('Code saved! (Check console)')
+  notifySuccess('Code saved! (Check console)')
 }
 </script>
 
