@@ -238,7 +238,7 @@ export default function (pi: ExtensionAPI) {
   // Register weather command for direct use
   pi.registerCommand("weather", {
     description: "Query weather for a city",
-    handler: async (args: string, ctx: ExtensionContext) => {
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
       const city = args.trim();
       if (!city) {
         ctx.ui.notify("请提供城市名称，例如: /weather Beijing", "error");
@@ -252,12 +252,12 @@ export default function (pi: ExtensionAPI) {
         const formattedResponse = formatWeatherResponse(rawWeather, city, false, false);
         
         // Use ctx.send to display the result in chat
-        await ctx.send(formattedResponse);
+        ctx.ui.notify(formattedResponse, "info");
         
         ctx.ui.setStatus("weather", "");
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        await ctx.send(`❌ 无法获取 ${city} 的天气信息: ${errorMessage}`);
+        ctx.ui.notify(`❌ 无法获取 ${city} 的天气信息: ${errorMessage}`, "error");
         ctx.ui.setStatus("weather", "");
       }
     },
