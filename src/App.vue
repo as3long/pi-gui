@@ -106,6 +106,10 @@ onMounted(async () => {
         if (resp.data) {
           console.log('[PiGUI] Response data:', JSON.stringify(resp.data, null, 2).substring(0, 1500))
         }
+      } else if (event.type === 'extension_error') {
+        // Log extension errors for debugging
+        const extErr = event as any
+        console.error('[PiGUI] Extension error:', extErr)
       } else {
         console.log('[PiGUI] Received event:', event.type)
       }
