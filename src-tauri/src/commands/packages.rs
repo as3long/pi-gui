@@ -11,7 +11,7 @@ pub async fn pi_install_package(source: String) -> Result<serde_json::Value, Str
     
     let pi_path = super::config::find_pi_binary()?;
     
-    eprintln!("[PiGUI] Installing package from: {}", source);
+    tracing::info!("Installing package from: {}", source);
     
     let mut cmd = if pi_path.ends_with(".ps1") {
         let mut c = Command::new("powershell.exe");
@@ -53,12 +53,12 @@ pub async fn pi_install_package(source: String) -> Result<serde_json::Value, Str
             line = stdout_reader.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        eprintln!("[Pi install] {}", line);
+                        tracing::info!("[Pi install] {}", line);
                         output.push(line);
                     }
                     Ok(None) => break,
                     Err(e) => {
-                        eprintln!("[Pi install] stdout error: {}", e);
+                        tracing::error!("{}", e);
                         break;
                     }
                 }
@@ -66,11 +66,11 @@ pub async fn pi_install_package(source: String) -> Result<serde_json::Value, Str
             line = stderr_reader.next_line() => {
                 match line {
                     Ok(Some(line)) => {
-                        eprintln!("[Pi install err] {}", line);
+                        tracing::error!("[Pi install err] {}", line);
                     }
                     Ok(None) => {}
                     Err(e) => {
-                        eprintln!("[Pi install] stderr error: {}", e);
+                        tracing::error!("{}", e);
                     }
                 }
             }

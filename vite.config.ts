@@ -68,6 +68,10 @@ export default defineConfig(async () => ({
       }
     },
     // Chunk size warning limit
-    chunkSizeWarningLimit: 1000
+    chunkSizeWarningLimit: 500,
+    // Strip console.* in production builds
+    esbuild: {
+      drop: ['console']
+    }
   }
 }));

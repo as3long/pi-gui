@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia'
 import { shallowRef, ref, computed, watch } from 'vue'
 import { useSettingsStore } from './settings'
-import { piGetSessionStats } from '../ipc/bridge'
+import { piGetSessionStats, piGetHomeDir } from '../ipc/bridge'
+import { invoke } from '@tauri-apps/api/core'
 import type {
   SessionInfo,
   SessionStats,
@@ -27,7 +28,7 @@ export const useSessionStore = defineStore('session', () => {
   // ── Session State ──
   // Use shallowRef for large lists to reduce reactivity overhead
   const sessions = shallowRef<SessionInfo[]>([])
-  const sessionSnapshots = ref<Map<string, SessionSnapshot>>(new Map())
+  const sessionSnapshots = shallowRef<Map<string, SessionSnapshot>>(new Map())
   const currentSessionId = ref<string | null>(null)
   const currentSessionFile = ref<string | null>(null)
   const sessionName = ref<string | null>(null)
@@ -39,9 +40,12 @@ export const useSessionStore = defineStore('session', () => {
   const isLoadingSession = ref(false)
 
   // ── Watchers ──
+  // Prevent persist during initial load
+  let isRestoring = false
+
   // Persist session when it changes
   watch([currentSessionId, currentSessionFile, sessionName], () => {
-    persistState()
+    if (!isRestoring) persistState()
   })
 
   // ── Session Tree ──
@@ -93,25 +97,91 @@ export const useSessionStore = defineStore('session', () => {
 
   // ── Actions ──
 
-  function loadPersisted() {
+
+  // -- Disk persistence (~/.pi-gui/last-session.json) --
+  const SESSION_FILE = 'last-session.json'
+
+  async function saveSessionToDisk() {
     try {
-      const savedWorkspace = localStorage.getItem(STORAGE_KEY_WORKSPACE)
-      if (savedWorkspace) {
-        currentWorkspace.value = JSON.parse(savedWorkspace)
+      const { writeTextFile } = await import('@tauri-apps/plugin-fs')
+      const home = await piGetHomeDir()
+      const dirPath = home + '\\.pi-gui'
+      const filePath = dirPath + '\\' + SESSION_FILE
+      await invoke('create_dir_all', { path: dirPath })
+      const data = {
+        sessionId: currentSessionId.value,
+        sessionFile: currentSessionFile.value,
+        sessionName: sessionName.value,
+        workspace: currentWorkspace.value,
+        savedAt: new Date().toISOString(),
       }
-      const savedSession = localStorage.getItem(STORAGE_KEY_SESSION)
-      if (savedSession) {
-        const data = JSON.parse(savedSession)
-        currentSessionId.value = data.sessionId
-        currentSessionFile.value = data.sessionFile
-        sessionName.value = data.sessionName
-      }
+      await writeTextFile(filePath, JSON.stringify(data, null, 2))
+      console.log('[SessionStore] Saved to disk:', filePath, data.sessionId)
     } catch (e) {
-      console.warn('[SessionStore] Failed to load persisted state:', e)
+      console.warn('[SessionStore] Failed to save to disk:', e)
+    }
+  }
+
+  async function loadSessionFromDisk() {
+    try {
+      const { readTextFile } = await import('@tauri-apps/plugin-fs')
+      const home = await piGetHomeDir()
+      const filePath = home + '\\.pi-gui\\' + SESSION_FILE
+      const content = await readTextFile(filePath)
+      const parsed = JSON.parse(content)
+      console.log('[SessionStore] Loaded from disk:', filePath, parsed.sessionId)
+      return parsed
+    } catch (e) {
+      console.log('[SessionStore] No disk data:', e.message)
+      return null
+    }
+  }
+
+  async function loadPersisted() {
+    console.log('[SessionStore] loadPersisted called, isRestoring=', isRestoring)
+    isRestoring = true
+    try {
+      // Try loading from disk first (~/.pi-gui/last-session.json)
+      console.log('[SessionStore] Attempting disk load...')
+      const diskData = await loadSessionFromDisk()
+      console.log('[SessionStore] Disk load result:', diskData)
+      if (diskData) {
+        console.log('[SessionStore] Restoring from disk:', diskData.sessionId, diskData.sessionName)
+        if (diskData.workspace) currentWorkspace.value = diskData.workspace
+        if (diskData.sessionId) {
+          currentSessionId.value = diskData.sessionId
+          currentSessionFile.value = diskData.sessionFile || null
+          sessionName.value = diskData.sessionName || null
+        }
+        console.log('[SessionStore] Restored! currentSessionId=', currentSessionId.value)
+        return
+      }
+      console.log('[SessionStore] No disk data, falling back to localStorage')
+      // Fallback to localStorage
+      try {
+        const savedWorkspace = localStorage.getItem(STORAGE_KEY_WORKSPACE)
+        if (savedWorkspace) {
+          currentWorkspace.value = JSON.parse(savedWorkspace)
+        }
+        const savedSession = localStorage.getItem(STORAGE_KEY_SESSION)
+        if (savedSession) {
+          const data = JSON.parse(savedSession)
+          currentSessionId.value = data.sessionId
+          currentSessionFile.value = data.sessionFile
+          sessionName.value = data.sessionName
+        }
+      } catch (e) {
+        console.warn('[SessionStore] Failed to load persisted state:', e)
+      }
+    } finally {
+      console.log('[SessionStore] loadPersisted done, isRestoring=false')
+      isRestoring = false
     }
   }
 
   function persistState() {
+    // Also persist to disk (fire and forget)
+    saveSessionToDisk()
     try {
       if (currentWorkspace.value) {
         localStorage.setItem(STORAGE_KEY_WORKSPACE, JSON.stringify(currentWorkspace.value))
@@ -237,9 +307,12 @@ export const useSessionStore = defineStore('session', () => {
         }
         
         if ('sessionId' in data || 'session_id' in data) {
-          currentSessionId.value = data.sessionId || data.session_id
-          currentSessionFile.value = data.sessionFile || data.session_file
-          sessionName.value = data.sessionName || data.session_name
+          // Only set from response if not already restored from disk
+          if (!currentSessionId.value) {
+            currentSessionId.value = data.sessionId || data.session_id
+            currentSessionFile.value = data.sessionFile || data.session_file
+            sessionName.value = data.sessionName || data.session_name
+          }
           thinkingLevel.value = (data.thinkingLevel || data.thinking_level) as ThinkingLevel
           steeringMode.value = (data.steeringMode || data.steering_mode) as QueueMode
           followUpMode.value = (data.followUpMode || data.follow_up_mode) as QueueMode
@@ -323,7 +396,9 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   function updateSessionSnapshot(snapshot: SessionSnapshot) {
-    sessionSnapshots.value.set(snapshot.ref.sessionId, snapshot)
+    const newSnapshots = new Map(sessionSnapshots.value)
+    newSnapshots.set(snapshot.ref.sessionId, snapshot)
+    sessionSnapshots.value = newSnapshots
   }
 
   function setStats(s: SessionStats) {

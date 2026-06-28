@@ -9,9 +9,6 @@ pub async fn create_dir_all(path: String) -> Result<(), String> {
 }
 
 /// Delete a file (async using tokio fs).
-/// 
-/// Uses tokio's async file system operations to avoid blocking
-/// the main thread during I/O operations.
 #[tauri::command]
 pub async fn pi_delete_file(path: String) -> Result<(), String> {
     tokio::fs::remove_file(&path)
@@ -20,8 +17,6 @@ pub async fn pi_delete_file(path: String) -> Result<(), String> {
 }
 
 /// Read directory contents (async using tokio fs).
-/// 
-/// Returns a nested directory structure with file/directory info.
 #[tauri::command]
 pub async fn pi_read_directory(
     path: String,
@@ -29,14 +24,10 @@ pub async fn pi_read_directory(
 ) -> Result<Vec<serde_json::Value>, String> {
     let base_path = PathBuf::from(&path);
     let max_depth = max_depth.unwrap_or(3);
-    
-    // Use Box::pin to handle async recursion
     Box::pin(read_dir_recursive(base_path, 0, max_depth)).await
 }
 
 /// Recursively read directory contents (boxed async recursion).
-/// 
-/// Uses Box::pin to allow safe async recursion without infinite future size.
 async fn read_dir_recursive(
     path: PathBuf,
     depth: u32,
@@ -45,32 +36,29 @@ async fn read_dir_recursive(
     if depth >= max_depth {
         return Ok(vec![]);
     }
-    
+
     let mut entries = Vec::new();
     let mut dir = tokio::fs::read_dir(&path)
         .await
         .map_err(|e| format!("Failed to read directory: {}", e))?;
-    
+
     while let Ok(Some(entry)) = dir.next_entry().await {
-        let file_type = entry.file_type()
+        let file_type = entry
+            .file_type()
             .await
             .map_err(|e| format!("Failed to get file type: {}", e))?;
-        
-        let name = entry.file_name()
-            .to_string_lossy()
-            .to_string();
-        
+
+        let name = entry.file_name().to_string_lossy().to_string();
         let entry_path = entry.path();
         let path_str = entry_path.to_string_lossy().to_string();
-        
+
         if file_type.is_dir() {
-            // Recursive call with boxed future
             let children = if depth + 1 < max_depth {
                 Box::pin(read_dir_recursive(entry_path, depth + 1, max_depth)).await?
             } else {
                 vec![]
             };
-            
+
             entries.push(serde_json::json!({
                 "name": name,
                 "path": path_str,
@@ -83,7 +71,7 @@ async fn read_dir_recursive(
             } else {
                 0
             };
-            
+
             entries.push(serde_json::json!({
                 "name": name,
                 "path": path_str,
@@ -92,24 +80,82 @@ async fn read_dir_recursive(
             }));
         }
     }
-    
+
     Ok(entries)
 }
 
 /// Read session file content (async).
-/// Handles both JSONL format (one JSON per line) and regular JSON array.
+/// Detects format by first non-whitespace character:
+/// - `[` → JSON array, parse as JSON
+/// - `{` → single JSON object, wrap in array
+/// - anything else → JSONL (one JSON per line)
 #[tauri::command]
 pub async fn pi_read_session(path: String) -> Result<serde_json::Value, String> {
     let content = tokio::fs::read_to_string(&path)
         .await
         .map_err(|e| format!("Failed to read session: {}", e))?;
-    
-    // First, try to parse as regular JSON (array or object)
-    if let Ok(session) = serde_json::from_str::<serde_json::Value>(&content) {
-        return Ok(session);
+
+    // Detect format by first non-whitespace character
+    let first_char = content.trim_start().chars().next();
+
+    match first_char {
+        Some('[') => {
+            // JSON array
+            serde_json::from_str::<serde_json::Value>(&content)
+                .map_err(|e| format!("Failed to parse JSON array: {}", e))
+        }
+        Some('{') => {
+            // Single JSON object — try full parse, fallback to JSONL
+            if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&content) {
+                return Ok(obj);
+            }
+            // Fallback: treat as JSONL even though it starts with {
+            parse_jsonl(&content)
+        }
+        _ => parse_jsonl(&content),
     }
-    
-    // If that fails, try JSONL format (one JSON object per line)
+}
+
+/// Read only the first N lines of a session file (for metadata).
+#[tauri::command]
+pub async fn pi_read_session_metadata(
+    path: String,
+    max_lines: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    let max_lines = max_lines.unwrap_or(20);
+
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let file = tokio::fs::File::open(&path)
+        .await
+        .map_err(|e| format!("Failed to open session: {}", e))?;
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+    let mut messages = Vec::new();
+    let mut line_count = 0;
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        if line_count >= max_lines {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(trimmed) {
+            Ok(msg) => {
+                messages.push(msg);
+                line_count += 1;
+            }
+            Err(e) => tracing::warn!(?e, "Failed to parse session metadata line"),
+        }
+    }
+
+    Ok(serde_json::Value::Array(messages))
+}
+
+/// Parse JSONL content (one JSON object per line).
+fn parse_jsonl(content: &str) -> Result<serde_json::Value, String> {
     let mut messages = Vec::new();
     for line in content.lines() {
         let line = line.trim();
@@ -118,41 +164,8 @@ pub async fn pi_read_session(path: String) -> Result<serde_json::Value, String> 
         }
         match serde_json::from_str::<serde_json::Value>(line) {
             Ok(msg) => messages.push(msg),
-            Err(e) => eprintln!("Warning: Failed to parse session line: {}", e),
+            Err(e) => tracing::warn!(?e, "Failed to parse session line"),
         }
     }
-    
-    Ok(serde_json::Value::Array(messages))
-}
-
-/// Read only the first N lines of a session file (for metadata).
-/// This is much faster than reading the entire file.
-#[tauri::command]
-pub async fn pi_read_session_metadata(path: String, max_lines: Option<usize>) -> Result<serde_json::Value, String> {
-    let max_lines = max_lines.unwrap_or(20);
-    let content = tokio::fs::read_to_string(&path)
-        .await
-        .map_err(|e| format!("Failed to read session: {}", e))?;
-    
-    let mut messages = Vec::new();
-    let mut line_count = 0;
-    
-    for line in content.lines() {
-        if line_count >= max_lines {
-            break;
-        }
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<serde_json::Value>(line) {
-            Ok(msg) => {
-                messages.push(msg);
-                line_count += 1;
-            }
-            Err(e) => eprintln!("Warning: Failed to parse session line: {}", e),
-        }
-    }
-    
     Ok(serde_json::Value::Array(messages))
 }

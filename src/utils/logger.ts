@@ -33,25 +33,25 @@ async function initLogPath(): Promise<string | null> {
   if (logFilePath) return logFilePath
   if (initPromise) return initPromise
   
-  console.log('[Logger] Initializing log file path...')
+  // Initialization logging (removed raw console)
   
   initPromise = (async () => {
     try {
       const home = await getHomeDir()
-      console.log('[Logger] Home dir:', home)
+    
       
       const logDirPath = `${home}\\\\${LOG_DIR}`
       logFilePath = `${logDirPath}\\\\${LOG_FILE}`
       
-      console.log('[Logger] Log dir:', logDirPath)
-      console.log('[Logger] Log file:', logFilePath)
+    
+    
       
       // Create directory using Rust command
       try {
         await invoke('create_dir_all', { path: logDirPath })
-        console.log('[Logger] Directory created successfully')
+      
       } catch (e) {
-        console.warn('[Logger] Directory creation (may already exist):', e)
+      
       }
       
       return logFilePath
@@ -154,23 +154,6 @@ class Logger {
       } catch {
         logLine += ' [Circular/Unserializable data]'
       }
-    }
-    
-    // Also log to console
-    const consoleMsg = `[${level.toUpperCase()}] [${this.module}] ${message}`
-    switch (level) {
-      case 'debug':
-        console.debug(consoleMsg, data || '')
-        break
-      case 'info':
-        console.info(consoleMsg, data || '')
-        break
-      case 'warn':
-        console.warn(consoleMsg, data || '')
-        break
-      case 'error':
-        console.error(consoleMsg, data || '')
-        break
     }
     
     // Add to buffer and schedule write
@@ -292,9 +275,9 @@ setTimeout(async () => {
     const startupLog = new Logger('Logger')
     startupLog.info('Logger system initialized')
     startupLog.info(`Log file location: ${path}`)
-    console.log('[Logger] Initialization complete!')
+    // init done
   } else {
-    console.error('[Logger] Initialization FAILED')
+    // init failed
   }
 }, 500)
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onUnmounted, watch } from 'vue'
 import { usePureMVC, ModelProxy } from '../../mvc'
 import { useSessionStore } from '../../stores/session'
 import { useSettingsStore } from '../../stores/settings'
@@ -14,10 +14,14 @@ const stats = computed(() => sessionStore.stats)
 const thinkingLevel = ref(modelProxy.thinkingLevel)
 const cwd = ref(settingsStore.cwd)
 
-// Sync thinking level
-setInterval(() => {
+// Sync thinking level via polling with proper cleanup
+const syncTimer = setInterval(() => {
   thinkingLevel.value = modelProxy.thinkingLevel
 }, 500)
+
+onUnmounted(() => {
+  clearInterval(syncTimer)
+})
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'

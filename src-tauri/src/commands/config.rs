@@ -44,18 +44,36 @@ pub fn find_pi_binary() -> Result<String, String> {
         }
     }
 
-    // Check common locations (prefer .cmd on Windows)
-    let home = env::var("USERPROFILE").unwrap_or_default();
-    let common_locations = [
-        // npm global on Unix
+    // Check fnm node-versions directory for any installed version
+    let home = home_dir().unwrap_or_default();
+    let fnm_versions = home.join("AppData/Roaming/fnm/node-versions");
+    if fnm_versions.exists() {
+        if let Ok(entries) = fs::read_dir(&fnm_versions) {
+            // Collect and sort by version (newest first) to prefer latest
+            let mut versions: Vec<_> = entries.flatten()
+                .filter(|e| e.path().is_dir())
+                .collect();
+            versions.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+
+            for entry in versions {
+                let install_dir = entry.path().join("installation");
+                for name in &["pi.cmd", "pi.exe", "pi.ps1", "pi"] {
+                    let candidate = install_dir.join(name);
+                    if candidate.exists() {
+                        return Ok(candidate.to_string_lossy().to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: check standard locations
+    let fallback_paths = [
         "/usr/local/bin/pi",
         "/usr/bin/pi",
-        // fnm/node locations - check .cmd first on Windows
-        &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi.cmd", home),
-        &format!(r"{}\AppData\Roaming\fnm\node-versions\v26.2.0\installation\pi", home),
     ];
 
-    for loc in &common_locations {
+    for loc in &fallback_paths {
         let path = PathBuf::from(loc);
         if path.exists() {
             return Ok(loc.to_string());
@@ -92,7 +110,9 @@ pub async fn pi_set_agent_settings(settings: serde_json::Value) -> Result<(), St
     
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
-        let _ = tokio_fs::create_dir_all(parent).await;
+        if let Err(e) = tokio_fs::create_dir_all(parent).await {
+            tracing::warn!(?e, parent = %parent.display(), "Failed to create config parent directory");
+        }
     }
     
     let content = serde_json::to_string_pretty(&settings)
@@ -131,7 +151,9 @@ pub async fn pi_set_agent_auth(auth: serde_json::Value) -> Result<(), String> {
     
     // Ensure parent directory exists
     if let Some(parent) = auth_path.parent() {
-        let _ = tokio_fs::create_dir_all(parent).await;
+        if let Err(e) = tokio_fs::create_dir_all(parent).await {
+            tracing::warn!(?e, parent = %parent.display(), "Failed to create config parent directory");
+        }
     }
     
     let content = serde_json::to_string_pretty(&auth)

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, watch } from 'vue'
+import { ref, shallowRef, computed, watch } from 'vue'
 import type {
   AgentMessage,
   AssistantMessage,
@@ -18,7 +18,7 @@ const STREAMING_THROTTLE_MS = 16
 export const useChatStore = defineStore('chat', () => {
   // ── State ──
   // Map of sessionId -> messages
-  const messagesBySession = ref<Map<string, AgentMessage[]>>(new Map())
+  const messagesBySession = shallowRef<Map<string, AgentMessage[]>>(new Map())
   const currentSessionId = ref<string | null>(null)
   
   const isStreaming = ref(false)

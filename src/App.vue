@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from './stores/settings'
 import { useSessionStore } from './stores/session'
 import ChatView from './components/chat/ChatView.vue'
@@ -97,23 +97,28 @@ function handleKeydown(e: KeyboardEvent) {
   }
 }
 
+
+// Save original error handlers for cleanup (module scope for onUnmounted access)
+const prevOnError = window.onerror
+const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+  logger.error('Unhandled promise rejection:', {
+    reason: event.reason?.toString(),
+    stack: event.reason?.stack
+  })
+}
+
 onMounted(async () => {
   logger.info('Application mounting...')
-  
   // Start watchdog early to catch any initialization freezes
   watchdog.start()
-  
-  // Add global error handler
+
+  // Set global error handlers
   window.onerror = (message, source, lineno, colno, error) => {
     logger.error('Global error:', { message, source, lineno, colno, error: error?.stack })
+    if (prevOnError) prevOnError(message, source, lineno, colno, error)
   }
   
-  window.addEventListener('unhandledrejection', (event) => {
-    logger.error('Unhandled promise rejection:', {
-      reason: event.reason?.toString(),
-      stack: event.reason?.stack
-    })
-  })
+  window.addEventListener('unhandledrejection', handleUnhandledRejection)
 
   // Start PureMVC facade (single source of truth)
   startupPureMVC()
@@ -133,6 +138,14 @@ onMounted(async () => {
   logger.endMeasure('start-event-listeners')
 
   // Register event handlers for stores
+
+  // Sync chatStore session when sessionStore restores from disk
+  watch(() => sessionStore.currentSessionId, (newId) => {
+    if (newId) {
+      chatStore.setSession(newId)
+    }
+  })
+
   onPiEvent('*', (event) => {
     // Log important events for debugging
     const importantTypes = ['agent_start', 'agent_end', 'error', 'response', 'extension_error', 'compaction_start', 'compaction_end']
@@ -209,6 +222,8 @@ onUnmounted(() => {
     cleanupEvents()
   }
   clearEventHandlers()
+  window.removeEventListener('unhandledrejection', handleUnhandledRejection)
+  window.onerror = prevOnError
   document.removeEventListener('keydown', handleKeydown)
   logger.info('Application unmounted')
 })
@@ -221,7 +236,6 @@ function updateTheme() {
 }
 
 // Watch for dark mode changes
-import { watch } from 'vue'
 watch(() => settingsStore.darkMode, updateTheme)
 
 // File handlers

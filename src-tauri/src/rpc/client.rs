@@ -17,32 +17,14 @@ enum StdinMessage {
 
 /// Find pi executable in PATH
 fn find_pi() -> Option<String> {
-    let pi_names = if cfg!(windows) {
-        vec!["pi.cmd", "pi.exe", "pi.bat"]
-    } else {
-        vec!["pi"]
-    };
-
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path) {
-            for name in &pi_names {
-                let pi_path = dir.join(name);
-                if pi_path.exists() {
-                    return Some(pi_path.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    None
+    crate::commands::find_pi_binary().ok()
 }
 
 /// Manages the pi --mode rpc subprocess lifecycle and JSONL communication.
 #[derive(Default)]
 pub struct PiRpcClient {
     process: Option<Child>,
-    #[allow(dead_code)]
-    stdin: Option<std::process::ChildStdin>,
+
     running: Arc<AtomicBool>,
     stdin_sender: Option<Sender<StdinMessage>>,
 }
@@ -51,7 +33,6 @@ impl PiRpcClient {
     pub fn new() -> Self {
         Self {
             process: None,
-            stdin: None,
             running: Arc::new(AtomicBool::new(false)),
             stdin_sender: None,
         }
@@ -78,17 +59,17 @@ impl PiRpcClient {
         // ✅ KEEP IT SIMPLE: Just find and execute pi directly
         let pi_path = find_pi().ok_or_else(|| {
             let error_msg = "pi not found. Please run: npm i -g pi-coding-agent";
-            eprintln!("[PiGUI] {}", error_msg);
+            tracing::error!("{}", error_msg);
             error_msg.to_string()
         })?;
 
-        eprintln!("[PiGUI] Found pi at: {}", pi_path);
+        tracing::info!("Found pi at: {}", pi_path);
 
         let mut cmd = Command::new(&pi_path);
         cmd.args(["--mode", "rpc", "--no-session"]);
 
         if let Some(m) = model {
-            eprintln!("[PiGUI] Setting model: {}", m);
+            tracing::debug!("Setting model: {}", m);
             cmd.arg("--model").arg(m);
         }
 
@@ -102,7 +83,7 @@ impl PiRpcClient {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        eprintln!("[PiGUI] Spawning pi process...");
+        tracing::info!("Spawning pi process...");
 
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -111,19 +92,19 @@ impl PiRpcClient {
             .spawn()
             .map_err(|e| {
                 let error_msg = format!("Failed to spawn pi: {}", e);
-                eprintln!("[PiGUI] {}", error_msg);
+                tracing::error!("{}", error_msg);
                 error_msg
             })?;
 
         let pid = child.id();
-        eprintln!("[PiGUI] Pi process started with PID: {}", pid);
+        tracing::info!("Pi process started with PID: {}", pid);
 
         let stdin = child.stdin.take().ok_or("Failed to capture stdin")?;
         let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
         let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
 
         self.process = Some(child);
-        self.running.store(true, Ordering::SeqCst);
+        self.running.store(true, Ordering::Release);
 
         // Create channel for async stdin writes
         let (stdin_tx, stdin_rx): (Sender<StdinMessage>, Receiver<StdinMessage>) = mpsc::channel();
@@ -133,16 +114,16 @@ impl PiRpcClient {
         let running_for_stdin = self.running.clone();
         thread::spawn(move || {
             let mut stdin = stdin;
-            while running_for_stdin.load(Ordering::SeqCst) {
+            while running_for_stdin.load(Ordering::Acquire) {
                 match stdin_rx.recv_timeout(Duration::from_millis(100)) {
                     Ok(StdinMessage::Command(json)) => {
-                        eprintln!("[PiGUI] Writing to stdin: {}", &json[..json.len().min(100)]);
+                        tracing::debug!("Writing to stdin: {}", &json[..json.len().min(100)]);
                         if let Err(e) = writeln!(stdin, "{}", json) {
-                            eprintln!("[PiGUI] Failed to write to stdin: {}", e);
+                            tracing::error!("{}", e);
                             break;
                         }
                         if let Err(e) = stdin.flush() {
-                            eprintln!("[PiGUI] Failed to flush stdin: {}", e);
+                            tracing::error!("{}", e);
                             break;
                         }
                     }
@@ -154,7 +135,7 @@ impl PiRpcClient {
                     }
                 }
             }
-            eprintln!("[PiGUI] Stdin writer thread exiting");
+            tracing::debug!("Stdin writer thread exiting");
         });
 
         // Start event reader thread
@@ -169,7 +150,7 @@ impl PiRpcClient {
             for line in buf_reader.lines() {
                 if let Ok(line) = line {
                     if !line.trim().is_empty() {
-                        eprintln!("[Pi stderr] {}", line);
+                        tracing::error!("[stderr] {}", line);
                     }
                 }
             }
@@ -205,16 +186,15 @@ impl PiRpcClient {
     }
 
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
+        self.running.load(Ordering::Acquire)
     }
 
     pub fn kill(&mut self) -> Result<(), String> {
-        self.running.store(false, Ordering::SeqCst);
+        self.running.store(false, Ordering::Release);
         // Send quit signal to stdin writer thread
         if let Some(sender) = self.stdin_sender.take() {
             let _ = sender.send(StdinMessage::Quit);
         }
-        self.stdin = None;
         if let Some(mut process) = self.process.take() {
             // Windows: Use taskkill to kill entire process tree
             #[cfg(target_os = "windows")]
@@ -261,7 +241,7 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
     let buf_reader = BufReader::new(reader);
 
     for line in buf_reader.lines() {
-        if !running.load(Ordering::SeqCst) {
+        if !running.load(Ordering::Acquire) {
             break;
         }
 
@@ -316,6 +296,6 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
         }
     }
 
-    running.store(false, Ordering::SeqCst);
+    running.store(false, Ordering::Release);
     let _ = app_handle.emit("pi:process_exit", "");
 }
