@@ -15,6 +15,9 @@ import type {
   HostUiResponse,
 } from './types'
 import { useUiStore } from '../stores/ui'
+import { createLogger } from '../utils/logger'
+
+const logger = createLogger('Bridge')
 
 // ── Tauri Command Wrappers ──
 
@@ -122,6 +125,10 @@ export async function piReadDirectory(path: string, maxDepth?: number): Promise<
 
 export async function piReadSession(path: string): Promise<any> {
   return await invoke<any>('pi_read_session', { path })
+}
+
+export async function piReadSessionMetadata(path: string, maxLines?: number): Promise<any> {
+  return await invoke<any>('pi_read_session_metadata', { path, maxLines })
 }
 
 // ── Session Driver Commands ──
@@ -273,6 +280,12 @@ export async function startEventListeners(): Promise<() => void> {
     if (specificHandlers.length === 0 && wildcardHandlers.length === 0 && eventType !== 'extension_ui_request') {
       return
     }
+    
+    // Log important events
+    const importantTypes = ['agent_start', 'agent_end', 'error', 'compaction_start', 'compaction_end']
+    if (importantTypes.includes(eventType)) {
+      logger.debug(`Received event: ${eventType}`)
+    }
 
     try {
       // Full parsing only when needed
@@ -286,41 +299,23 @@ export async function startEventListeners(): Promise<() => void> {
         handler(parsed)
       }
 
-      // Forward extension UI requests to UI store
-      // Filter out unwanted UI requests that cause empty Prompt dialogs
-      if (parsed.type === 'extension_ui_request') {
+      // Forward extension UI requests to UI store (only if we have actual handlers)
+      if (parsed.type === 'extension_ui_request' && (specificHandlers.length > 0 || wildcardHandlers.length > 0)) {
         const req = parsed as any
         
-        // Debug: log full UI request to understand what's being sent
-        console.log('[PiGUI] Extension UI request received:', JSON.stringify({
-          method: req.method,
-          title: req.title,
-          message: req.message,
-          options: req.options,
-          status_key: req.status_key,
-          id: req.id
-        }, null, 2))
-        
-        // Handle notify method - show toast notification via window
-        if (req.method === 'notify' && req.message) {
-          console.log('[PiGUI] Showing notify toast:', req.message)
-          // Use window.__piNotify set by ToastContainer
-          if ((window as any).__piNotify) {
-            (window as any).__piNotify('info', req.message)
-          }
-          return
-        }
-        
-        // Skip empty/undesired requests:
-        // 1. No method specified
-        // 2. Status/widget updates (not user prompts)
-        // 3. Only status_key without title/message
-        // 4. Requests with no content at all (empty Prompt dialogs)
+        // Skip non-interactive requests early to avoid unnecessary processing
         const skipMethods = ['status', 'widget', 'progress', 'status_update', 'setStatus']
         const hasNoUserContent = !req.title && !req.message && !req.options && !req.placeholder && !req.prefill
         
         if (!req.method || skipMethods.includes(req.method) || (hasNoUserContent && req.status_key) || hasNoUserContent) {
-          console.log('[PiGUI] Skipping non-interactive UI request')
+          return
+        }
+        
+        // Handle notify method - show toast notification via window
+        if (req.method === 'notify' && req.message) {
+          if ((window as any).__piNotify) {
+            (window as any).__piNotify('info', req.message)
+          }
           return
         }
         

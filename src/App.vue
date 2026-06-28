@@ -14,6 +14,12 @@ import { useChatStore } from './stores/chat'
 import ToastContainer from './components/common/ToastContainer.vue'
 import { notifyError } from './utils/notify'
 import CodeEditor from './components/editor/CodeEditor.vue'
+import { createLogger, createWatchdog, getLogFilePath } from './utils/logger'
+import { usePureMVC, NotificationNames } from './mvc'
+
+const logger = createLogger('App')
+const { startup: startupPureMVC, facade } = usePureMVC()
+const watchdog = createWatchdog(logger)
 
 const settingsStore = useSettingsStore()
 const sessionStore = useSessionStore()
@@ -44,6 +50,8 @@ function handleKeydown(e: KeyboardEvent) {
   if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
     e.preventDefault()
     piNewSession()
+    chatStore.clearMessages()
+    facade.sendNotification(NotificationNames.SESSION_CREATED)
   }
   // Ctrl/Cmd + /: Toggle Sessions panel
   if ((e.ctrlKey || e.metaKey) && e.key === '/') {
@@ -65,6 +73,15 @@ function handleKeydown(e: KeyboardEvent) {
     e.preventDefault()
     piCycleModel()
   }
+  // Ctrl/Cmd + Shift + L: Show Log Path
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'L') {
+    e.preventDefault()
+    getLogFilePath().then(path => {
+      if (path) {
+        alert(`📋 Log file location:\n${path}\n\nYou can open this file with any text editor.`)
+      }
+    })
+  }
   // Ctrl/Cmd + S: Save file
   if ((e.ctrlKey || e.metaKey) && e.key === 's') {
     e.preventDefault()
@@ -81,39 +98,52 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 onMounted(async () => {
+  logger.info('Application mounting...')
+  
+  // Start watchdog early to catch any initialization freezes
+  watchdog.start()
+  
+  // Add global error handler
+  window.onerror = (message, source, lineno, colno, error) => {
+    logger.error('Global error:', { message, source, lineno, colno, error: error?.stack })
+  }
+  
+  window.addEventListener('unhandledrejection', (event) => {
+    logger.error('Unhandled promise rejection:', {
+      reason: event.reason?.toString(),
+      stack: event.reason?.stack
+    })
+  })
+
+  // Start PureMVC facade (single source of truth)
+  startupPureMVC()
+
   // Load persisted settings
+  logger.startMeasure('load-persisted-state')
   settingsStore.loadPersisted()
   sessionStore.loadPersisted()
+  logger.endMeasure('load-persisted-state')
 
   // Set CSS class for dark mode
   updateTheme()
 
   // Start event listeners
+  logger.startMeasure('start-event-listeners')
   cleanupEvents = await startEventListeners()
+  logger.endMeasure('start-event-listeners')
 
   // Register event handlers for stores
   onPiEvent('*', (event) => {
-    // Skip verbose logging for high-frequency streaming events
-    if (event.type !== 'message_update' && event.type !== 'tool_execution_update') {
-      if (event.type === 'response') {
-        const resp = event as any
-        console.log('[PiGUI] Response event:', {
-          command: resp.command,
-          success: resp.success,
-          hasData: !!resp.data,
-          dataKeys: resp.data ? Object.keys(resp.data) : []
-        })
-        if (resp.data) {
-          console.log('[PiGUI] Response data:', JSON.stringify(resp.data, null, 2).substring(0, 1500))
-        }
-      } else if (event.type === 'extension_error') {
-        // Log extension errors for debugging
-        const extErr = event as any
-        console.error('[PiGUI] Extension error:', extErr)
-      } else {
-        console.log('[PiGUI] Received event:', event.type)
-      }
+    // Log important events for debugging
+    const importantTypes = ['agent_start', 'agent_end', 'error', 'response', 'extension_error', 'compaction_start', 'compaction_end']
+    
+    if (importantTypes.includes(event.type)) {
+      logger.info(`Received event: ${event.type}`, {
+        hasData: !!(event as any).data,
+        command: (event as any).command
+      })
     }
+    
     chatStore.handleEvent(event)
     sessionStore.handleEvent(event)
   })
@@ -124,16 +154,21 @@ onMounted(async () => {
   // Auto-start pi process
   try {
     const cwd = settingsStore.cwd || 'C:\\Users\\huoying\\code'
+    logger.info(`Auto-starting pi with cwd: ${cwd}`)
     
-    // Check if pi is already running
+    logger.startMeasure('check-pi-running')
     const alreadyRunning = await piIsRunning()
+    logger.endMeasure('check-pi-running')
+    
     if (alreadyRunning) {
       sessionStore.isRunning = true
-      console.log('[PiGUI] Pi is already running')
+      logger.info('Pi is already running')
     } else {
+      logger.startMeasure('pi-start')
       await piStart(cwd)
+      logger.endMeasure('pi-start', 5000) // Warn if takes longer than 5s
       sessionStore.isRunning = true
-      console.log('[PiGUI] Pi process started successfully')
+      logger.info('Pi process started successfully')
     }
     
     // Fire-and-forget: state, stats, and directory in parallel (don't block UI)
@@ -159,18 +194,23 @@ onMounted(async () => {
     // Note: Models are NOT auto-loaded on startup to prevent UI blocking
     // User can click "Refresh List" in model picker to load models when needed
   } catch (e) {
-    console.error('[PiGUI] Failed to auto-start pi:', e)
+    logger.error('Failed to auto-start pi:', e)
     // Don't show error to user, they can start manually
   }
+  
+  logger.info('Application mounted successfully')
 })
 
 onUnmounted(() => {
+  logger.info('Application unmounting...')
+  watchdog.stop()
   sessionStore.stopStatsRefresh()
   if (cleanupEvents) {
     cleanupEvents()
   }
   clearEventHandlers()
   document.removeEventListener('keydown', handleKeydown)
+  logger.info('Application unmounted')
 })
 
 function updateTheme() {

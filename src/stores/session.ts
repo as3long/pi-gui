@@ -36,6 +36,7 @@ export const useSessionStore = defineStore('session', () => {
   // ── Session Status ──
   const sessionStatus = ref<SessionStatus>('idle')
   const runningRunId = ref<string | null>(null)
+  const isLoadingSession = ref(false)
 
   // ── Watchers ──
   // Persist session when it changes
@@ -485,6 +486,7 @@ export const useSessionStore = defineStore('session', () => {
     // Session Status
     sessionStatus,
     runningRunId,
+    isLoadingSession,
 
     // Session Tree
     sessionTree,

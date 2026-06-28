@@ -1,5 +1,13 @@
 use std::path::PathBuf;
 
+/// Create a directory and all its parent directories (async).
+#[tauri::command]
+pub async fn create_dir_all(path: String) -> Result<(), String> {
+    tokio::fs::create_dir_all(&path)
+        .await
+        .map_err(|e| format!("Failed to create directory: {}", e))
+}
+
 /// Delete a file (async using tokio fs).
 /// 
 /// Uses tokio's async file system operations to avoid blocking
@@ -110,6 +118,38 @@ pub async fn pi_read_session(path: String) -> Result<serde_json::Value, String> 
         }
         match serde_json::from_str::<serde_json::Value>(line) {
             Ok(msg) => messages.push(msg),
+            Err(e) => eprintln!("Warning: Failed to parse session line: {}", e),
+        }
+    }
+    
+    Ok(serde_json::Value::Array(messages))
+}
+
+/// Read only the first N lines of a session file (for metadata).
+/// This is much faster than reading the entire file.
+#[tauri::command]
+pub async fn pi_read_session_metadata(path: String, max_lines: Option<usize>) -> Result<serde_json::Value, String> {
+    let max_lines = max_lines.unwrap_or(20);
+    let content = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| format!("Failed to read session: {}", e))?;
+    
+    let mut messages = Vec::new();
+    let mut line_count = 0;
+    
+    for line in content.lines() {
+        if line_count >= max_lines {
+            break;
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(msg) => {
+                messages.push(msg);
+                line_count += 1;
+            }
             Err(e) => eprintln!("Warning: Failed to parse session line: {}", e),
         }
     }

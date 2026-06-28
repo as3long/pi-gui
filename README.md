@@ -26,11 +26,19 @@
 - 🎨 **Dark/Light Themes** - Automatic theme switching based on system preference
 - 💻 **Code Editor** - Built-in CodeMirror 6 editor with syntax highlighting
 
+### Architecture & Design
+- 🏗️ **PureMVC Architecture** - Clean separation of concerns with PureMVC framework
+- 🧩 **Modular Components** - Reusable Vue components with clear responsibilities
+- 📊 **Diff Editor** - Visual diff comparison for file edits
+- 🔄 **Streaming Messages** - Real-time message streaming with status indicators
+- 🛠️ **Tool Result Display** - Enhanced tool call results visualization
+
 ### Extension Support
 - 🔌 **Extension UI Dialogs** - Select, confirm, input, and editor dialogs
 - 📋 **Session Management** - Create, switch, and fork sessions
 - 🏷️ **Session Tags** - Color-coded tags for session organization
 - 🔍 **Session Search** - Real-time filtering of sessions
+- 📂 **Session Metadata** - Read and display session metadata
 
 ### Advanced Features
 - 📤 **Import/Export** - Export session data and tags to JSON
@@ -38,6 +46,8 @@
 - 🔄 **Drag & Drop** - Reorder sessions with drag and drop
 - 📊 **Token Tracking** - Monitor token usage and costs
 - 🖼️ **Image Paste** - Paste images directly into chat
+- 📁 **Directory Creation** - Create directories from the GUI
+- 🔐 **Authentication** - Built-in login dialog for provider authentication
 
 ### Keyboard Shortcuts
 
@@ -94,19 +104,33 @@ pi-gui/
 │   │   ├── chat/                 # Chat UI components
 │   │   │   ├── ChatView.vue      # Main chat interface
 │   │   │   ├── MessageList.vue   # Message list container
-│   │   │   └── MessageItem.vue   # Individual message display
+│   │   │   ├── MessageItem.vue   # Individual message display
+│   │   │   ├── AssistantMessage.vue # Assistant message display
+│   │   │   ├── UserMessage.vue   # User message display
+│   │   │   ├── StreamingMessage.vue # Streaming message display
+│   │   │   ├── ToolCallView.vue  # Tool call visualization
+│   │   │   ├── ToolResultMessage.vue # Tool result display
+│   │   │   ├── EmptyState.vue    # Empty state display
+│   │   │   └── utils.ts         # Chat utilities
 │   │   ├── input/                # Input components
 │   │   │   └── InputArea.vue     # Message input with paste support
 │   │   ├── settings/             # Settings UI
 │   │   │   ├── SettingsPanel.vue # Settings container
-│   │   │   └── ModelSelector.vue # Model selection
+│   │   │   ├── ModelSelector.vue # Model selection
+│   │   │   ├── ModelPicker.vue   # Model picker
+│   │   │   ├── LoginDialog.vue   # Login dialog
+│   │   │   ├── auth/             # Authentication components
+│   │   │   └── tabs/             # Settings tabs
 │   │   ├── session/              # Session management
-│   │   │   └── SessionTree.vue   # Session tree with drag-drop
+│   │   │   ├── SessionTree.vue   # Session tree with drag-drop
+│   │   │   ├── SessionItem.vue   # Session item component
+│   │   │   └── utils.ts         # Session utilities
 │   │   ├── extension/            # Extension UI
 │   │   │   └── ExtensionDialog.vue # Extension dialogs
 │   │   └── common/               # Shared components
 │   │       ├── MarkdownRenderer.vue # Markdown rendering
-│   │       └── DiffRenderer.vue  # Diff visualization
+│   │       ├── DiffRenderer.vue  # Diff visualization
+│   │       └── DiffEditor.vue    # Diff editor
 │   ├── stores/                   # Pinia state management
 │   │   ├── chat.ts               # Chat messages & streaming
 │   │   ├── session.ts            # Session state
@@ -115,14 +139,28 @@ pi-gui/
 │   ├── ipc/                      # Tauri IPC bridge
 │   │   ├── bridge.ts             # Command wrappers
 │   │   └── types.ts              # TypeScript types
+│   ├── mvc/                      # PureMVC architecture
+│   │   ├── AppFacade.ts          # Application facade
+│   │   ├── usePureMVC.ts         # PureMVC composable
+│   │   ├── index.ts              # MVC exports
+│   │   ├── command/              # PureMVC commands
+│   │   ├── mediator/             # PureMVC mediators
+│   │   └── proxy/                # PureMVC proxies
+│   ├── types/                    # TypeScript types
+│   ├── utils/                    # Utility functions
+│   │   ├── logger.ts             # Logging utilities
+│   │   └── version.ts            # Version utilities
 │   ├── App.vue                   # Root component
 │   └── main.ts                   # Entry point
 ├── src-tauri/                    # Backend (Rust)
 │   ├── src/
 │   │   ├── lib.rs                # Tauri commands
+│   │   ├── commands/             # Tauri commands
+│   │   │   └── fs.rs            # File system commands
 │   │   ├── rpc/
 │   │   │   ├── client.rs         # Pi RPC client
 │   │   │   └── protocol.rs       # Protocol types
+│   │   ├── state.rs              # Application state
 │   │   └── main.rs               # Entry point
 │   ├── icons/                    # App icons
 │   ├── Cargo.toml                # Rust dependencies
@@ -157,7 +195,7 @@ Toggle between dark and light themes in **Settings > General > Dark Mode**.
 
 ### Tech Stack
 
-- **Frontend**: Vue 3, TypeScript, Pinia, Vite
+- **Frontend**: Vue 3, TypeScript, Pinia, Vite, PureMVC
 - **Backend**: Rust, Tauri 2
 - **Protocol**: JSON-RPC over stdin/stdout
 
@@ -207,6 +245,8 @@ This generates:
 | `pi_set_model` | Change model |
 | `pi_cycle_model` | Cycle through models |
 | `pi_set_thinking_level` | Set thinking level |
+| `pi_read_session_metadata` | Read session metadata |
+| `create_dir_all` | Create directory and parent directories |
 
 ### RPC Events
 

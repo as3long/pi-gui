@@ -7,12 +7,17 @@ import { computed } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useSessionStore } from '../../stores/session'
 import { useSettingsStore } from '../../stores/settings'
-import { piPrompt, piSteer, piAbort, piStart, piNewSession, piGetSessionStats, piCompactSession } from '../../ipc/bridge'
+import { piPrompt, piSteer, piAbort, piStart, piNewSession, piGetSessionStats, piCompactSession, piGetHomeDir, piReadDirectory } from '../../ipc/bridge'
 import { watch, ref } from 'vue'
+import { createLogger } from '../../utils/logger'
+import { usePureMVC, NotificationNames } from '../../mvc'
+
+const logger = createLogger('ChatView')
 
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
+const { facade } = usePureMVC()
 
 let messageIdCounter = 0
 const showCwdEditor = ref(false)
@@ -27,23 +32,68 @@ const currentCwd = computed(() => {
 })
 
 async function onSend(message: string) {
-  console.log('[PiGUI] onSend called with:', message)
+  logger.info('onSend called', { messageLength: message.length })
   
   // Auto-start pi if not running
   if (!sessionStore.isRunning) {
     try {
       const cwd = currentCwd.value || 'C:\\Users\\huoying\\code'
-      console.log('[PiGUI] Starting pi with cwd:', cwd)
+      logger.info(`Starting pi with cwd: ${cwd}`)
+      logger.startMeasure('pi-start-on-send')
       await piStart(cwd)
+      logger.endMeasure('pi-start-on-send', 3000)
       sessionStore.isRunning = true
     } catch (e) {
-      console.error('[PiGUI] Failed to start pi:', e)
+      logger.error('Failed to start pi:', e)
       return
     }
   }
 
+  // If current session is temp, create real session on backend first
+  if (chatStore.isCurrentSessionTemp) {
+    logger.info('Creating real session for temp chat...')
+    try {
+      await piNewSession()
+      // Wait for session file to be written
+      await new Promise(resolve => setTimeout(resolve, 500))
+      // Find the newest session
+      const homeDir = await piGetHomeDir()
+      if (homeDir) {
+        const sessionDir = `${homeDir}/.pi/agent/sessions`
+        const sessionFiles = await piReadDirectory(sessionDir, 2)
+        let newestId = ''
+        let newestPath = ''
+        if (Array.isArray(sessionFiles)) {
+          for (const projectDir of sessionFiles) {
+            if (projectDir.type === 'directory' && projectDir.children) {
+              for (const sessionFile of projectDir.children) {
+                if (sessionFile.name?.endsWith('.jsonl')) {
+                  const parts = sessionFile.name.replace('.jsonl', '').split('_')
+                  const sid = parts[1] || ''
+                  if (sid > newestId) {
+                    newestId = sid
+                    newestPath = sessionFile.path
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (newestId) {
+          chatStore.replaceTempSession(newestId)
+          sessionStore.currentSessionId = newestId
+          sessionStore.currentSessionFile = newestPath
+          logger.info('Real session created:', newestId)
+        }
+      }
+      facade.sendNotification(NotificationNames.SESSION_CREATED)
+    } catch (e) {
+      logger.error('Failed to create session:', e)
+    }
+  }
+
   const id = `msg-${++messageIdCounter}`
-  console.log('[PiGUI] Sending message with id:', id)
+  logger.info(`Sending message with id: ${id}`)
 
   // Add user message to chat immediately
   chatStore.addMessage({
@@ -51,22 +101,26 @@ async function onSend(message: string) {
     content: message,
     timestamp: Date.now(),
   })
-  console.log('[PiGUI] User message added to chat')
+  logger.debug('User message added to chat')
 
   try {
     if (chatStore.isStreaming) {
       // Queue as steer during streaming
-      console.log('[PiGUI] Sending as steer')
+      logger.debug('Sending as steer')
+      logger.startMeasure('pi-steer')
       await piSteer(id, message)
+      logger.endMeasure('pi-steer', 2000)
     } else {
-      console.log('[PiGUI] Sending as prompt')
+      logger.debug('Sending as prompt')
+      logger.startMeasure('pi-prompt')
       await piPrompt(id, message)
+      logger.endMeasure('pi-prompt', 5000) // Warn if takes longer than 5s
     }
-    console.log('[PiGUI] Message sent successfully')
+    logger.info('Message sent successfully')
     // Refresh stats after sending
     setTimeout(() => piGetSessionStats(), 500)
   } catch (e) {
-    console.error('[PiGUI] Failed to send message:', e)
+    logger.error('Failed to send message:', e)
   }
 }
 
@@ -75,12 +129,18 @@ async function onAbort() {
 }
 
 async function onNewSession() {
-  await piNewSession()
-  chatStore.clearMessages()
+  logger.info('Creating new chat...')
+  chatStore.createNewChat()
+  sessionStore.currentSessionId = null
+  sessionStore.currentSessionFile = null
+  sessionStore.sessionName = 'New Chat'
+  logger.info('New chat created')
 }
 
 async function onRefreshStats() {
+  logger.startMeasure('refresh-stats')
   await piGetSessionStats()
+  logger.endMeasure('refresh-stats')
 }
 
 async function onCompact() {
@@ -182,6 +242,11 @@ watch(() => chatStore.isStreaming, (streaming) => {
 
     <!-- Messages -->
     <div class="messages-area">
+      <!-- Loading overlay -->
+      <div v-if="sessionStore.isLoadingSession" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading session...</div>
+      </div>
       <MessageList />
     </div>
 
@@ -394,10 +459,44 @@ watch(() => chatStore.isStreaming, (streaming) => {
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  position: relative;
 }
 
 .input-area-wrapper {
   flex-shrink: 0;
   border-top: 1px solid var(--border-color);
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-color);
+  z-index: 10;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-text {
+  margin-top: 12px;
+  color: var(--muted-color);
+  font-size: 0.9em;
 }
 </style>

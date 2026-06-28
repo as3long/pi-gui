@@ -1,10 +1,23 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { usePureMVC, ModelProxy } from '../../mvc'
 import { useSessionStore } from '../../stores/session'
 import { useSettingsStore } from '../../stores/settings'
 
+const { facade } = usePureMVC()
+const modelProxy = facade.retrieveProxy(ModelProxy.NAME) as ModelProxy
 const sessionStore = useSessionStore()
 const settingsStore = useSettingsStore()
+
+// Use sessionStore stats directly for reactivity
+const stats = computed(() => sessionStore.stats)
+const thinkingLevel = ref(modelProxy.thinkingLevel)
+const cwd = ref(settingsStore.cwd)
+
+// Sync thinking level
+setInterval(() => {
+  thinkingLevel.value = modelProxy.thinkingLevel
+}, 500)
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -18,15 +31,13 @@ function formatCost(n: number): string {
   return '$' + n.toFixed(4)
 }
 
-const input = computed(() => sessionStore.stats?.tokens.input ?? 0)
-const output = computed(() => sessionStore.stats?.tokens.output ?? 0)
-const total = computed(() => sessionStore.stats?.tokens.total ?? 0)
-const cost = computed(() => sessionStore.stats?.cost ?? 0)
-const contextTokens = computed(() => sessionStore.stats?.contextUsage?.tokens ?? 0)
-const contextWindow = computed(() => sessionStore.stats?.contextUsage?.contextWindow ?? 0)
-const contextPercent = computed(() => sessionStore.stats?.contextUsage?.percent ?? 0)
-const thinkingLevel = computed(() => settingsStore.thinkingLevel)
-const cwd = computed(() => settingsStore.cwd)
+const input = computed(() => stats.value?.tokens.input ?? 0)
+const output = computed(() => stats.value?.tokens.output ?? 0)
+const total = computed(() => stats.value?.tokens.total ?? 0)
+const cost = computed(() => stats.value?.cost ?? 0)
+const contextTokens = computed(() => stats.value?.contextUsage?.tokens ?? 0)
+const contextWindow = computed(() => stats.value?.contextUsage?.contextWindow ?? 0)
+const contextPercent = computed(() => stats.value?.contextUsage?.percent ?? 0)
 
 const contextDisplay = computed(() => {
   if (!contextWindow.value) return null

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useChatStore } from '../../stores/chat'
-import { useSessionStore } from '../../stores/session'
+import { usePureMVC, ChatProxy, SessionProxy } from '../../mvc'
 import { piPromptWithImages } from '../../ipc/bridge'
 import type { ImageContent } from '../../ipc/types'
 
@@ -14,8 +13,10 @@ defineProps<{
   disabled?: boolean
 }>()
 
-const chatStore = useChatStore()
-const sessionStore = useSessionStore()
+const { facade } = usePureMVC()
+const chatProxy = facade.retrieveProxy(ChatProxy.NAME) as ChatProxy
+const sessionProxy = facade.retrieveProxy(SessionProxy.NAME) as SessionProxy
+
 const inputText = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 
@@ -26,7 +27,6 @@ function handleSend() {
   emit('send', text)
   inputText.value = ''
 
-  // Auto-resize textarea
   if (inputRef.value) {
     inputRef.value.style.height = 'auto'
   }
@@ -40,7 +40,6 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 function onInput() {
-  // Auto-resize textarea
   if (inputRef.value) {
     inputRef.value.style.height = 'auto'
     inputRef.value.style.height = Math.min(inputRef.value.scrollHeight, 200) + 'px'
@@ -51,7 +50,6 @@ function handleAbort() {
   emit('abort')
 }
 
-// Handle paste of images from clipboard
 function handlePaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items
   if (!items) return
@@ -76,14 +74,12 @@ function handlePaste(e: ClipboardEvent) {
   }
 
   if (images.length === 0) return
-  // Prevent default insertion of the image
   e.preventDefault()
   Promise.all(readPromises).then(() => {
     const id = `paste-${Date.now()}`
     const message = inputText.value.trim() || '(image pasted)'
     piPromptWithImages(id, message, images)
     inputText.value = ''
-    // Reset textarea height after sending
     if (inputRef.value) inputRef.value.style.height = 'auto'
   })
 }
@@ -98,13 +94,13 @@ defineExpose({ focusInput })
 <template>
   <div class="input-area">
     <!-- Queue info banner -->
-    <div v-if="chatStore.pendingSteering && chatStore.pendingSteering.length > 0" class="queue-banner">
+    <div v-if="chatProxy.pendingSteering.length > 0" class="queue-banner">
       <span class="queue-label">Steering:</span>
-      <span class="queue-count">{{ chatStore.pendingSteering.length }} message(s) queued</span>
+      <span class="queue-count">{{ chatProxy.pendingSteering.length }} message(s) queued</span>
     </div>
-    <div v-if="chatStore.pendingFollowUp && chatStore.pendingFollowUp.length > 0" class="queue-banner follow-up">
+    <div v-if="chatProxy.pendingFollowUp.length > 0" class="queue-banner follow-up">
       <span class="queue-label">Follow-up:</span>
-      <span class="queue-count">{{ chatStore.pendingFollowUp.length }} message(s) queued</span>
+      <span class="queue-count">{{ chatProxy.pendingFollowUp.length }} message(s) queued</span>
     </div>
 
     <div class="input-row">
@@ -121,9 +117,9 @@ defineExpose({ focusInput })
       />
 
       <div class="input-actions">
-        <!-- Abort button (shown during streaming or when agent is running) -->
+        <!-- Abort button -->
         <button
-          v-if="chatStore.isStreaming || sessionStore.sessionStatus === 'running'"
+          v-if="chatProxy.isStreaming || sessionProxy.sessionStatus === 'running'"
           class="action-btn abort-btn"
           title="Abort current operation"
           @click="handleAbort"

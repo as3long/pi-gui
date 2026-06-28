@@ -43,6 +43,7 @@ pub fn run() {
             commands::pi_delete_file,
             commands::pi_read_directory,
             commands::pi_read_session,
+            commands::pi_read_session_metadata,
             commands::pi_install_package,
             commands::pi_list_packages,
             commands::pi_create_session,
@@ -60,6 +61,7 @@ pub fn run() {
             commands::pi_navigate_session_tree,
             commands::pi_respond_to_host_ui_request,
             commands::pi_close_session,
+            commands::create_dir_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

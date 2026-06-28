@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { shallowRef, ref, computed, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type {
   AgentMessage,
   AssistantMessage,
@@ -12,17 +12,23 @@ import type {
 const STREAMING_THROTTLE_MS = 16
 
 /**
- * Chat store manages the conversation messages and streaming state.
+ * Chat store manages conversation messages per session.
+ * Each session has its own message history.
  */
 export const useChatStore = defineStore('chat', () => {
   // ── State ──
-  // Use shallowRef for large arrays to avoid deep reactivity overhead
-  const messages = shallowRef<AgentMessage[]>(loadMessages())
+  // Map of sessionId -> messages
+  const messagesBySession = ref<Map<string, AgentMessage[]>>(new Map())
+  const currentSessionId = ref<string | null>(null)
+  
   const isStreaming = ref(false)
   const isCompacting = ref(false)
   const isRetrying = ref(false)
   const pendingSteering = ref<string[]>([])
   const pendingFollowUp = ref<string[]>([])
+
+  // Temporary session counter
+  let tempSessionCounter = 0
 
   // Streaming state for the current in-progress assistant message
   const streamingMessage = ref<StreamingMessage>({
@@ -36,49 +42,67 @@ export const useChatStore = defineStore('chat', () => {
   let bufferedThinking = ''
   let streamingThrottleTimer: ReturnType<typeof setTimeout> | null = null
 
+  // Load all sessions from localStorage on init
+  function loadAllSessions(): Map<string, AgentMessage[]> {
+    const map = new Map<string, AgentMessage[]>()
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i)
+        if (key?.startsWith('pi-gui:chat:')) {
+          const sessionId = key.replace('pi-gui:chat:', '')
+          const saved = localStorage.getItem(key)
+          if (saved) {
+            map.set(sessionId, JSON.parse(saved))
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[ChatStore] Failed to load sessions:', e)
+    }
+    return map
+  }
+
+  // Initialize with saved data
+  messagesBySession.value = loadAllSessions()
+
   // Watch for message changes and save to localStorage (debounced)
   let saveTimeout: ReturnType<typeof setTimeout> | null = null
+  
+  function saveCurrentSession() {
+    if (!currentSessionId.value) return
+    const msgs = messagesBySession.value.get(currentSessionId.value) || []
+    if (msgs.length === 0) return
+    
+    try {
+      // Only save last 100 messages per session
+      const msgsToSave = msgs.slice(-100)
+      localStorage.setItem(`pi-gui:chat:${currentSessionId.value}`, JSON.stringify(msgsToSave))
+    } catch (e) {
+      console.error('[ChatStore] Failed to save session:', e)
+    }
+  }
+
+  // Watch messages map changes
   watch(
-    () => messages.value,
-    (newMessages) => {
-      // Debounce save to avoid frequent localStorage writes
+    () => messagesBySession.value.size,
+    () => {
       if (saveTimeout) clearTimeout(saveTimeout)
-      saveTimeout = setTimeout(() => {
-        saveMessages(newMessages)
-      }, 500)
-    },
-    { deep: true }
+      saveTimeout = setTimeout(saveCurrentSession, 500)
+    }
   )
 
-  // Load messages from localStorage
-  function loadMessages(): AgentMessage[] {
-    try {
-      const saved = localStorage.getItem('pi-gui:messages')
-      if (saved) {
-        return JSON.parse(saved)
-      }
-    } catch (e) {
-      console.error('[ChatStore] Failed to load messages:', e)
-    }
-    return []
-  }
-
-  // Save messages to localStorage (limit to last 50 messages to avoid size issues)
-  function saveMessages(msgs: AgentMessage[]) {
-    try {
-      // Don't save empty arrays
-      if (msgs.length === 0) {
-        return
-      }
-      // Only save last 50 messages to avoid localStorage quota issues
-      const msgsToSave = msgs.slice(-50)
-      localStorage.setItem('pi-gui:messages', JSON.stringify(msgsToSave))
-    } catch (e) {
-      console.error('[ChatStore] Failed to save messages:', e)
-    }
-  }
-
   // ── Computed ──
+  // Current session's messages
+  const messages = computed(() => {
+    if (!currentSessionId.value) return []
+    return messagesBySession.value.get(currentSessionId.value) || []
+  })
+
+  // Check if current session is temporary (not yet created on backend)
+  const isCurrentSessionTemp = computed(() => {
+    return currentSessionId.value?.startsWith('temp-') || false
+  })
+
   const lastAssistantMessage = computed(() => {
     return [...messages.value].reverse().find((m) => m.role === 'assistant') as AssistantMessage | undefined
   })
@@ -87,8 +111,68 @@ export const useChatStore = defineStore('chat', () => {
 
   // ── Actions ──
 
+  /** Check if we have messages for a session in memory */
+  function hasSessionMessages(sessionId: string): boolean {
+    return messagesBySession.value.has(sessionId)
+  }
+
+  /** Batch load messages for a session */
+  function loadSessionMessages(sessionId: string, messages: AgentMessage[]) {
+    const newMap = new Map(messagesBySession.value)
+    newMap.set(sessionId, [...messages])
+    messagesBySession.value = newMap
+    currentSessionId.value = sessionId
+  }
+
+  /** Create a new empty chat (temp session, will be created on first message) */
+  function createNewChat(): string {
+    const tempId = `temp-${++tempSessionCounter}-${Date.now()}`
+    const newMap = new Map(messagesBySession.value)
+    newMap.set(tempId, [])
+    messagesBySession.value = newMap
+    currentSessionId.value = tempId
+    return tempId
+  }
+
+  /** Replace temp session with real session ID */
+  function replaceTempSession(realSessionId: string) {
+    if (!currentSessionId.value?.startsWith('temp-')) return
+    
+    const tempId = currentSessionId.value
+    const newMap = new Map(messagesBySession.value)
+    const tempMessages = newMap.get(tempId) || []
+    newMap.delete(tempId)
+    newMap.set(realSessionId, tempMessages)
+    messagesBySession.value = newMap
+    currentSessionId.value = realSessionId
+    
+    // Save to localStorage
+    try {
+      localStorage.setItem(`pi-gui:chat:${realSessionId}`, JSON.stringify(tempMessages.slice(-100)))
+      localStorage.removeItem(`pi-gui:chat:${tempId}`)
+    } catch (e) {
+      console.error('[ChatStore] Failed to save session:', e)
+    }
+  }
+
+  function setSession(sessionId: string | null) {
+    // Save current session before switching
+    if (currentSessionId.value) {
+      saveCurrentSession()
+    }
+    currentSessionId.value = sessionId
+  }
+
   function addMessage(msg: AgentMessage) {
-    messages.value = [...messages.value, msg]
+    if (!currentSessionId.value) return
+    
+    const sessionMessages = messagesBySession.value.get(currentSessionId.value) || []
+    sessionMessages.push(msg)
+    
+    // Create new Map to trigger reactivity
+    const newMap = new Map(messagesBySession.value)
+    newMap.set(currentSessionId.value, [...sessionMessages])
+    messagesBySession.value = newMap
   }
 
   function flushBufferedStreaming() {
@@ -301,9 +385,12 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
-    // Batch update all messages at once (better for shallowRef)
-    if (newMessages.length > 0) {
-      messages.value = [...messages.value, ...newMessages]
+    // Add all messages to current session
+    if (newMessages.length > 0 && currentSessionId.value) {
+      const sessionMessages = messagesBySession.value.get(currentSessionId.value) || []
+      const newMap = new Map(messagesBySession.value)
+      newMap.set(currentSessionId.value, [...sessionMessages, ...newMessages])
+      messagesBySession.value = newMap
     }
 
     // Reset streaming state
@@ -317,7 +404,13 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function clearMessages() {
-    messages.value = [] // shallowRef assignment triggers update
+    if (!currentSessionId.value) return
+    
+    // Clear current session's messages
+    const newMap = new Map(messagesBySession.value)
+    newMap.delete(currentSessionId.value)
+    messagesBySession.value = newMap
+    
     // Clear the debounced timeout if any
     if (saveTimeout) {
       clearTimeout(saveTimeout)
@@ -327,7 +420,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = false
     isCompacting.value = false
     stopStreamingWatchdog()
-    localStorage.removeItem('pi-gui:messages')
+    localStorage.removeItem(`pi-gui:chat:${currentSessionId.value}`)
   }
 
   // ── Event Handlers ──
@@ -465,10 +558,10 @@ export const useChatStore = defineStore('chat', () => {
               ? endMsg.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n')
               : ''
           if (text) {
-            messages.value = [...messages.value, {
+            addMessage({
               role: 'assistant',
               content: [{ type: 'text', text }],
-            }]
+            })
           }
         }
         break
@@ -512,6 +605,8 @@ export const useChatStore = defineStore('chat', () => {
   return {
     // State
     messages,
+    currentSessionId,
+    isCurrentSessionTemp,
     isStreaming,
     isCompacting,
     isRetrying,
@@ -524,6 +619,11 @@ export const useChatStore = defineStore('chat', () => {
     currentStreamingText,
 
     // Actions
+    hasSessionMessages,
+    loadSessionMessages,
+    createNewChat,
+    replaceTempSession,
+    setSession,
     addMessage,
     clearMessages,
     handleEvent,

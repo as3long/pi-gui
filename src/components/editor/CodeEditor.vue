@@ -226,7 +226,7 @@ defineExpose({
 .codemirror-container {
   width: 100%;
   height: 100%;
-  min-height: 200px;
+  min-height: 100px;
 }
 
 /* CodeMirror 深度样式覆盖 */

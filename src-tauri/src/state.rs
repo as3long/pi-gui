@@ -3,9 +3,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::Mutex;
 
 /// Thread-safe application state using async Mutex
-/// 
-/// Uses tokio::sync::Mutex instead of std::sync::Mutex to prevent
-/// blocking the Tauri async runtime, which eliminates UI jank.
 #[derive(Default)]
 pub struct AppState {
     /// Async mutex-protected RPC client

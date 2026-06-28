@@ -1,12 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import { EditorView, lineNumbers, highlightActiveLine } from '@codemirror/view'
-import { EditorState } from '@codemirror/state'
-import { javascript } from '@codemirror/lang-javascript'
-import { oneDark } from '@codemirror/theme-one-dark'
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
-import { keymap } from '@codemirror/view'
-import { defaultKeymap } from '@codemirror/commands'
+import { computed } from 'vue'
 
 const props = withDefaults(defineProps<{
   oldCode: string
@@ -20,108 +13,50 @@ const props = withDefaults(defineProps<{
   language: 'javascript'
 })
 
-const leftEditor = ref<HTMLElement | null>(null)
-const rightEditor = ref<HTMLElement | null>(null)
-let leftView: EditorView | null = null
-let rightView: EditorView | null = null
-
-// Diff stats
-const diffStats = computed(() => {
+// Compute diff lines
+const diffLines = computed(() => {
   const oldLines = props.oldCode.split('\n')
   const newLines = props.newCode.split('\n')
-  let added = 0
-  let removed = 0
-  let unchanged = 0
+  const result: Array<{ type: 'add' | 'remove' | 'context'; text: string; lineNum?: number }> = []
   
-  // Simple line-by-line comparison
+  // Simple line-by-line diff
   const maxLen = Math.max(oldLines.length, newLines.length)
+  let oldLineNum = 1
+  let newLineNum = 1
+  
   for (let i = 0; i < maxLen; i++) {
-    if (i >= oldLines.length) {
-      added++
-    } else if (i >= newLines.length) {
-      removed++
-    } else if (oldLines[i] !== newLines[i]) {
-      added++
-      removed++
+    const oldLine = i < oldLines.length ? oldLines[i] : undefined
+    const newLine = i < newLines.length ? newLines[i] : undefined
+    
+    if (oldLine === undefined) {
+      // New line added
+      result.push({ type: 'add', text: newLine || '', lineNum: newLineNum++ })
+    } else if (newLine === undefined) {
+      // Line removed
+      result.push({ type: 'remove', text: oldLine, lineNum: oldLineNum++ })
+    } else if (oldLine === newLine) {
+      // Unchanged
+      result.push({ type: 'context', text: oldLine, lineNum: oldLineNum++ })
+      newLineNum++
     } else {
-      unchanged++
+      // Modified
+      result.push({ type: 'remove', text: oldLine, lineNum: oldLineNum++ })
+      result.push({ type: 'add', text: newLine, lineNum: newLineNum++ })
     }
   }
   
-  return { added, removed, unchanged }
+  return result
 })
 
-// Create editor with diff highlighting
-function createEditor(
-  parent: HTMLElement, 
-  value: string
-) {
-  const state = EditorState.create({
-    doc: value,
-    extensions: [
-      lineNumbers(),
-      highlightActiveLine(),
-      javascript(),
-      oneDark,
-      syntaxHighlighting(defaultHighlightStyle),
-      EditorView.editable.of(false),
-      EditorState.readOnly.of(true),
-      keymap.of(defaultKeymap),
-      // Custom decoration for diff lines
-      EditorView.theme({
-        '.diff-line-add': {
-          backgroundColor: 'rgba(46, 160, 67, 0.2)',
-          borderLeft: '3px solid #2ea043'
-        },
-        '.diff-line-remove': {
-          backgroundColor: 'rgba(248, 81, 73, 0.2)',
-          borderLeft: '3px solid #f85149'
-        },
-        '.diff-line-modified': {
-          backgroundColor: 'rgba(210, 153, 34, 0.2)',
-          borderLeft: '3px solid #d29922'
-        }
-      })
-    ]
-  })
-  
-  return new EditorView({ state, parent })
-}
-
-// Initialize editors
-onMounted(() => {
-  if (leftEditor.value && rightEditor.value) {
-    leftView = createEditor(leftEditor.value, props.oldCode)
-    rightView = createEditor(rightEditor.value, props.newCode)
+// Diff stats
+const diffStats = computed(() => {
+  let added = 0
+  let removed = 0
+  for (const line of diffLines.value) {
+    if (line.type === 'add') added++
+    if (line.type === 'remove') removed++
   }
-})
-
-// Watch for code changes
-watch([() => props.oldCode, () => props.newCode], () => {
-  if (leftView && rightView) {
-    // Update editors with new content
-    leftView.dispatch({
-      changes: {
-        from: 0,
-        to: leftView.state.doc.length,
-        insert: props.oldCode
-      }
-    })
-    rightView.dispatch({
-      changes: {
-        from: 0,
-        to: rightView.state.doc.length,
-        insert: props.newCode
-      }
-    })
-  }
-})
-
-// Cleanup
-import { onUnmounted } from 'vue'
-onUnmounted(() => {
-  leftView?.destroy()
-  rightView?.destroy()
+  return { added, removed }
 })
 </script>
 
@@ -129,38 +64,27 @@ onUnmounted(() => {
   <div class="diff-editor">
     <!-- Header -->
     <div class="diff-header">
-      <div class="diff-title">
-        <span class="diff-icon">📝</span>
-        <span>Code Changes</span>
+      <div class="diff-filenames">
+        <span class="filename old">{{ oldFilename }}</span>
+        <span class="arrow">→</span>
+        <span class="filename new">{{ newFilename }}</span>
       </div>
       <div class="diff-stats">
         <span class="stat-added">+{{ diffStats.added }}</span>
         <span class="stat-removed">-{{ diffStats.removed }}</span>
-        <span class="stat-unchanged">{{ diffStats.unchanged }} unchanged</span>
       </div>
     </div>
     
-    <!-- Editors Container -->
-    <div class="diff-container">
-      <!-- Left Editor (Old) -->
-      <div class="diff-panel">
-        <div class="panel-header old">
-          <span class="panel-label">Before</span>
-          <span class="panel-filename">{{ oldFilename }}</span>
-        </div>
-        <div ref="leftEditor" class="editor-panel"></div>
-      </div>
-      
-      <!-- Divider -->
-      <div class="diff-divider"></div>
-      
-      <!-- Right Editor (New) -->
-      <div class="diff-panel">
-        <div class="panel-header new">
-          <span class="panel-label">After</span>
-          <span class="panel-filename">{{ newFilename }}</span>
-        </div>
-        <div ref="rightEditor" class="editor-panel"></div>
+    <!-- Diff Content -->
+    <div class="diff-content">
+      <div
+        v-for="(line, index) in diffLines"
+        :key="index"
+        class="diff-line"
+        :class="`diff-line-${line.type}`"
+      >
+        <span class="line-prefix">{{ line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' ' }}</span>
+        <span class="line-text">{{ line.text }}</span>
       </div>
     </div>
   </div>
@@ -172,34 +96,49 @@ onUnmounted(() => {
   border-radius: 8px;
   overflow: hidden;
   background: #1e1e1e;
+  margin: 8px 0;
 }
 
 .diff-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 16px;
+  padding: 8px 12px;
   background: #252526;
   border-bottom: 1px solid #3c3c3c;
 }
 
-.diff-title {
+.diff-filenames {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.9em;
-  color: #cccccc;
-  font-weight: 500;
+  font-size: 0.85em;
 }
 
-.diff-icon {
-  font-size: 1.1em;
+.filename {
+  font-family: 'SF Mono', Monaco, monospace;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.filename.old {
+  background: rgba(248, 81, 73, 0.2);
+  color: #f85149;
+}
+
+.filename.new {
+  background: rgba(46, 160, 67, 0.2);
+  color: #2ea043;
+}
+
+.arrow {
+  color: #888;
 }
 
 .diff-stats {
   display: flex;
   gap: 12px;
-  font-size: 0.8em;
+  font-size: 0.85em;
   font-family: 'SF Mono', Monaco, monospace;
 }
 
@@ -211,74 +150,74 @@ onUnmounted(() => {
   color: #f85149;
 }
 
-.stat-unchanged {
-  color: #888;
+.diff-content {
+  max-height: 400px;
+  overflow-y: auto;
+  font-family: 'Source Code Pro', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #d4d4d4;
 }
 
-.diff-container {
+.diff-line {
   display: flex;
-  height: 400px;
+  padding: 0 12px;
+  min-height: 20px;
 }
 
-.diff-panel {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 12px;
-  background: #2d2d2d;
-  border-bottom: 1px solid #3c3c3c;
-}
-
-.panel-header.old {
-  border-left: 3px solid #f85149;
-}
-
-.panel-header.new {
+.diff-line-add {
+  background: rgba(46, 160, 67, 0.2);
   border-left: 3px solid #2ea043;
 }
 
-.panel-label {
-  font-size: 0.75em;
-  color: #888;
-  text-transform: uppercase;
+.diff-line-remove {
+  background: rgba(248, 81, 73, 0.2);
+  border-left: 3px solid #f85149;
 }
 
-.panel-filename {
-  font-size: 0.8em;
-  color: #cccccc;
-  font-family: 'SF Mono', Monaco, monospace;
+.diff-line-context {
+  border-left: 3px solid transparent;
 }
 
-.editor-panel {
+.line-prefix {
+  width: 16px;
+  flex-shrink: 0;
+  user-select: none;
+  text-align: center;
+}
+
+.diff-line-add .line-prefix {
+  color: #2ea043;
+}
+
+.diff-line-remove .line-prefix {
+  color: #f85149;
+}
+
+.line-text {
   flex: 1;
-  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding-left: 8px;
+  color: #d4d4d4;
 }
 
-.diff-divider {
-  width: 2px;
-  background: #3c3c3c;
+/* Scrollbar styling */
+.diff-content::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
-/* CodeMirror 样式覆盖 */
-.diff-panel :deep(.cm-editor) {
-  height: 100%;
-}
-
-.diff-panel :deep(.cm-scroller) {
-  font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.diff-panel :deep(.cm-gutters) {
+.diff-content::-webkit-scrollbar-track {
   background: #1e1e1e;
-  border-right: 1px solid #3c3c3c;
+}
+
+.diff-content::-webkit-scrollbar-thumb {
+  background: #3c3c3c;
+  border-radius: 4px;
+}
+
+.diff-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
 }
 </style>

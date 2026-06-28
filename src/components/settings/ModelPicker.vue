@@ -3,9 +3,18 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSettingsStore } from '../../stores/settings'
 import { useSessionStore } from '../../stores/session'
 import { piSetModel, piGetAvailableModels, piSetThinkingLevel, piGetState } from '../../ipc/bridge'
+import { usePureMVC } from '../../mvc'
+import type { PiAgentAuth } from '../../ipc/bridge'
 
 const settingsStore = useSettingsStore()
 const sessionStore = useSessionStore()
+const { getConfigProxy } = usePureMVC()
+
+// Get configured providers from auth.json
+const configuredProviders = computed(() => {
+  const auth: PiAgentAuth = getConfigProxy().auth
+  return Object.keys(auth)
+})
 
 const isOpen = ref(false)
 const searchQuery = ref('')
@@ -195,6 +204,7 @@ onUnmounted(() => {
             @click="selectModel(provider, model.id)"
           >
             <span class="model-name">{{ model.name }}</span>
+            <span v-if="configuredProviders.includes(String(provider))" class="config-badge" title="API key configured">✓</span>
             <span class="model-meta" v-if="model.reasoning">🧠</span>
           </button>
         </div>
@@ -430,5 +440,15 @@ onUnmounted(() => {
 .model-meta {
   margin-left: 8px;
   font-size: 0.9em;
+}
+
+.config-badge {
+  padding: 2px 6px;
+  background: var(--success-bg);
+  color: var(--success-color);
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: bold;
+  margin-left: 8px;
 }
 </style>
