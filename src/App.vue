@@ -506,6 +506,7 @@ async function handleReconnect() {
   --info-bg: rgba(59, 130, 246, 0.1);
 
   font-family:
+    'Noto Sans',
     ui-sans-serif,
     -apple-system,
     BlinkMacSystemFont,
@@ -803,7 +804,7 @@ html, body, #app {
 .file-viewer-path {
   font-size: 0.75em;
   color: var(--muted-color);
-  font-family: ui-monospace, 'SF Mono', monospace;
+  font-family: 'Source Code Pro', ui-monospace, 'SF Mono', monospace;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
