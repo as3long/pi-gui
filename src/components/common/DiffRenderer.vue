@@ -14,8 +14,19 @@ function stripAnsi(str: string): string {
 
 const cleanText = computed(() => stripAnsi(props.text))
 
-// Detect if the content looks like a diff
+// Safety threshold: skip expensive diff detection for large text
+const MAX_DIFF_TEXT_CHARS = 50000  // 50KB
+const MAX_DIFF_LINES = 2000
+
+const isLargeText = computed(() => {
+  return cleanText.value.length > MAX_DIFF_TEXT_CHARS || 
+         cleanText.value.split('\n').length > MAX_DIFF_LINES
+})
+
+// Detect if the content looks like a diff (skipped for large text)
 const isDiff = computed(() => {
+  if (isLargeText.value) return false
+  
   const lines = cleanText.value.split('\n')
   let diffLines = 0
   for (const line of lines) {
@@ -62,8 +73,12 @@ function getLineType(line: string): LineType {
 
 <template>
   <div class="diff-renderer" :class="{ 'is-diff': isDiff }">
+    <!-- Large text: skip diff detection, render as simple pre block -->
+    <div v-if="isLargeText" class="large-text-content">
+      <pre class="pre-block">{{ cleanText }}</pre>
+    </div>
     <!-- If detected as diff, render with color -->
-    <div v-if="isDiff" class="diff-content">
+    <div v-else-if="isDiff" class="diff-content">
       <div
         v-for="(line, idx) in diffLines"
         :key="idx"
@@ -88,6 +103,23 @@ function getLineType(line: string): LineType {
   background: var(--code-bg);
   border-radius: 6px;
   overflow: hidden;
+}
+
+.large-text-content {
+  font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.85em;
+  line-height: 1.55;
+  background: var(--code-bg);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.pre-block {
+  margin: 0;
+  padding: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .diff-content {

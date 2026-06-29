@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use tauri::ipc::Channel;
 
 use super::protocol::*;
 
@@ -46,11 +47,32 @@ impl PiRpcClient {
         self.spawn_with_model(cwd, app_handle, None)
     }
 
+    /// Spawn pi process with a Channel for streaming events.
+    /// This is the preferred method for Tauri Channel API integration.
+    pub fn spawn_with_channel(
+        &mut self,
+        cwd: &str,
+        app_handle: AppHandle,
+        channel: Channel<StreamEvent>,
+    ) -> Result<(), String> {
+        self.spawn_with_model_and_channel(cwd, app_handle, None, Some(channel))
+    }
+
     pub fn spawn_with_model(
         &mut self,
         cwd: &str,
         app_handle: AppHandle,
         model: Option<&str>,
+    ) -> Result<(), String> {
+        self.spawn_with_model_and_channel(cwd, app_handle, model, None)
+    }
+
+    fn spawn_with_model_and_channel(
+        &mut self,
+        cwd: &str,
+        app_handle: AppHandle,
+        model: Option<&str>,
+        channel: Option<Channel<StreamEvent>>,
     ) -> Result<(), String> {
         if self.is_running() {
             return Err("pi is already running".into());
@@ -140,9 +162,17 @@ impl PiRpcClient {
 
         // Start event reader thread
         let running = self.running.clone();
-        thread::spawn(move || {
-            read_events(stdout, app_handle.clone(), running.clone());
-        });
+        if let Some(channel) = channel {
+            // Channel mode: send events through the Tauri Channel
+            thread::spawn(move || {
+                read_events_with_channel(stdout, channel, running.clone());
+            });
+        } else {
+            // Legacy mode: emit Tauri events
+            thread::spawn(move || {
+                read_events(stdout, app_handle.clone(), running.clone());
+            });
+        }
 
         // Start stderr reader thread for debugging
         thread::spawn(move || {
@@ -237,6 +267,38 @@ impl Drop for PiRpcClient {
     }
 }
 
+/// Read events from pi's stdout and send through a Tauri Channel.
+/// This is more efficient than emitting individual events.
+fn read_events_with_channel(reader: impl Read + Send + 'static, channel: Channel<StreamEvent>, running: Arc<AtomicBool>) {
+    let buf_reader = BufReader::new(reader);
+
+    for line in buf_reader.lines() {
+        if !running.load(Ordering::Acquire) {
+            break;
+        }
+
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        // Send the raw JSON line through the channel
+        let event = StreamEvent { payload: line };
+        if channel.send(event).is_err() {
+            // Channel closed (frontend disconnected)
+            tracing::debug!("Channel closed, stopping event reader");
+            break;
+        }
+    }
+
+    running.store(false, Ordering::Release);
+}
+
+/// Read events from pi's stdout and emit Tauri events (legacy mode).
 fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, running: Arc<AtomicBool>) {
     let buf_reader = BufReader::new(reader);
 
@@ -254,15 +316,11 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
             continue;
         }
 
-        let _ = app_handle.emit("pi:raw", &line);
-
-        // Fast path for frequent events
+        // ── High-frequency events: emit ONLY dedicated event, skip pi:raw ──
+        // message_update and tool_execution_update are the most frequent during streaming.
+        // Emitting pi:raw for these doubles the IPC traffic and JSON.parse overhead.
         if line.contains(r#""type":"message_update""#) {
             let _ = app_handle.emit("pi:message_update", &line);
-            continue;
-        }
-        if line.contains(r#""type":"message_delta""#) {
-            let _ = app_handle.emit("pi:message_delta", &line);
             continue;
         }
         if line.contains(r#""type":"tool_execution_update""#) {
@@ -270,7 +328,9 @@ fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, runnin
             continue;
         }
 
-        // Less frequent events - do full JSON parsing
+        // ── Low-frequency events: emit both pi:raw (debug) and dedicated event ──
+        let _ = app_handle.emit("pi:raw", &line);
+
         if let Ok(event) = serde_json::from_str::<RpcEvent>(&line) {
             let event_name = match &event {
                 RpcEvent::AgentStart => "pi:agent_start",

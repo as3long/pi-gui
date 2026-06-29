@@ -61,6 +61,10 @@ export const useSessionStore = defineStore('session', () => {
 
   // ── Error / info messages ──
   const lastError = ref<string | null>(null)
+  
+  // ── Watchdog State ──
+  const isInactive = ref(false) // True when agent has been inactive for >60s during running
+  const inactiveSeconds = ref(0) // Seconds of inactivity
 
   // ── Persistence ──
   const STORAGE_KEY_WORKSPACE = 'pi-gui:currentWorkspace'
@@ -116,7 +120,7 @@ export const useSessionStore = defineStore('session', () => {
         savedAt: new Date().toISOString(),
       }
       await writeTextFile(filePath, JSON.stringify(data, null, 2))
-      console.log('[SessionStore] Saved to disk:', filePath, data.sessionId)
+
     } catch (e) {
       console.warn('[SessionStore] Failed to save to disk:', e)
     }
@@ -129,34 +133,31 @@ export const useSessionStore = defineStore('session', () => {
       const filePath = home + '\\.pi-gui\\' + SESSION_FILE
       const content = await readTextFile(filePath)
       const parsed = JSON.parse(content)
-      console.log('[SessionStore] Loaded from disk:', filePath, parsed.sessionId)
+
       return parsed
-    } catch (e) {
-      console.log('[SessionStore] No disk data:', e.message)
+    } catch (e: any) {
+
       return null
     }
   }
 
   async function loadPersisted() {
-    console.log('[SessionStore] loadPersisted called, isRestoring=', isRestoring)
+
     isRestoring = true
     try {
       // Try loading from disk first (~/.pi-gui/last-session.json)
-      console.log('[SessionStore] Attempting disk load...')
+  
       const diskData = await loadSessionFromDisk()
-      console.log('[SessionStore] Disk load result:', diskData)
+  
       if (diskData) {
-        console.log('[SessionStore] Restoring from disk:', diskData.sessionId, diskData.sessionName)
         if (diskData.workspace) currentWorkspace.value = diskData.workspace
         if (diskData.sessionId) {
           currentSessionId.value = diskData.sessionId
           currentSessionFile.value = diskData.sessionFile || null
           sessionName.value = diskData.sessionName || null
         }
-        console.log('[SessionStore] Restored! currentSessionId=', currentSessionId.value)
-        return
+          return
       }
-      console.log('[SessionStore] No disk data, falling back to localStorage')
       // Fallback to localStorage
       try {
         const savedWorkspace = localStorage.getItem(STORAGE_KEY_WORKSPACE)
@@ -174,8 +175,7 @@ export const useSessionStore = defineStore('session', () => {
         console.warn('[SessionStore] Failed to load persisted state:', e)
       }
     } finally {
-      console.log('[SessionStore] loadPersisted done, isRestoring=false')
-      isRestoring = false
+        isRestoring = false
     }
   }
 
@@ -209,11 +209,11 @@ export const useSessionStore = defineStore('session', () => {
       const data = response.data
       const cmd = response.command
       
-      console.log('[SessionStore] Response event - command:', cmd, 'hasData:', !!data)
+
       
       // Check if this is a stats response
       if ((cmd === 'get_session_stats' || cmd === 'session_stats') && data) {
-        console.log('[SessionStore] Processing stats response, raw data:', JSON.stringify(data, null, 2))
+
         
         // Data from pi is already in camelCase format, just assign it directly
         // but provide fallbacks for all fields
@@ -240,9 +240,9 @@ export const useSessionStore = defineStore('session', () => {
           },
         }
         
-        console.log('[SessionStore] Updated stats.value:', stats.value)
-        console.log('[SessionStore] tokens.input:', stats.value?.tokens?.input)
-        console.log('[SessionStore] contextUsage.percent:', stats.value?.contextUsage?.percent)
+
+
+
       }
 
       // Handle available models response
@@ -257,15 +257,15 @@ export const useSessionStore = defineStore('session', () => {
           reasoning: m.reasoning || false,
         }))
         settingsStore.setAvailableModels(models)
-        console.log('[SessionStore] Updated available models from event:', models.length)
+
       }
       
       // Handle set_model response - update current model
       if (cmd === 'set_model' && data) {
-        console.log('[SessionStore] set_model response:', JSON.stringify(data))
+
         if (data.model) {
           currentModel.value = data.model
-          console.log('[SessionStore] Updated model from set_model response:', data.model)
+
         } else if (data.provider && data.modelId) {
           // Construct model info from provider and modelId
           currentModel.value = {
@@ -278,7 +278,7 @@ export const useSessionStore = defineStore('session', () => {
             contextWindow: 0,
             maxTokens: 0,
           }
-          console.log('[SessionStore] Constructed model from set_model response:', data.provider, data.modelId)
+
         } else {
           // Fallback: use settings store values
           const settingsStore = useSettingsStore()
@@ -293,7 +293,7 @@ export const useSessionStore = defineStore('session', () => {
               contextWindow: 0,
               maxTokens: 0,
             }
-            console.log('[SessionStore] Used settings store for model:', settingsStore.provider, settingsStore.modelId)
+  
           }
         }
       }
@@ -303,7 +303,7 @@ export const useSessionStore = defineStore('session', () => {
         // Always update model if present in response
         if (data.model) {
           currentModel.value = data.model
-          console.log('[SessionStore] Updated model from state response:', data.model)
+
         }
         
         if ('sessionId' in data || 'session_id' in data) {
@@ -331,7 +331,7 @@ export const useSessionStore = defineStore('session', () => {
         if ((cmd === 'get_state' || !cmd) && ('stats' in data || 'stats' in (data.state || {}))) {
           const statsData = data.stats || data.state?.stats
           if (statsData && !stats.value) {
-            console.log('[SessionStore] Found stats in state response:', statsData)
+
             stats.value = {
               sessionFile: statsData.sessionFile ?? statsData.session_file,
               sessionId: statsData.sessionId ?? statsData.session_id ?? '',
@@ -354,7 +354,7 @@ export const useSessionStore = defineStore('session', () => {
                 percent: statsData.contextUsage?.percent ?? 0,
               },
             }
-            console.log('[SessionStore] Updated stats from state:', stats.value)
+
           }
         }
       }
@@ -373,7 +373,7 @@ export const useSessionStore = defineStore('session', () => {
 
     if (event.type === 'agent_end') {
       sessionStatus.value = 'idle'
-      resetAgentWatchdog()
+      stopAgentWatchdog()
       // Refresh stats after agent completes
       scheduleStatsRefresh(500)
     }
@@ -414,28 +414,43 @@ export const useSessionStore = defineStore('session', () => {
   let statsRefreshTimeout: ReturnType<typeof setTimeout> | null = null
   
   // ── Agent Watchdog - prevent UI hang during long tool execution
-  let agentWatchdogTimer: ReturnType<typeof setTimeout> | null = null
-  const agentLastActivity = ref(Date.now())
+  let agentWatchdogTimer: ReturnType<typeof setInterval> | null = null
+  let agentLastActivity = Date.now()
 
   // Reset watchdog when agent activity is detected
   function resetAgentWatchdog() {
-    agentLastActivity.value = Date.now()
-    if (agentWatchdogTimer) {
-      clearTimeout(agentWatchdogTimer)
-      agentWatchdogTimer = null
-    }
+    agentLastActivity = Date.now()
+    isInactive.value = false
+    inactiveSeconds.value = 0
   }
 
-  // Start watchdog when agent starts - warn if no activity for 60 seconds
+  // Start watchdog when agent starts - check every 5 seconds for activity
   function startAgentWatchdog() {
     resetAgentWatchdog()
-    // Check every 10 seconds for activity
-    agentWatchdogTimer = setTimeout(() => {
-      const inactiveTime = (Date.now() - agentLastActivity.value) / 1000
-      if (inactiveTime > 60 && sessionStatus.value === 'running') {
-        console.warn(`[SessionStore] Agent inactive for ${Math.round(inactiveTime)}s - consider aborting`)
+    if (agentWatchdogTimer) {
+      clearInterval(agentWatchdogTimer)
+    }
+    agentWatchdogTimer = setInterval(() => {
+      if (sessionStatus.value !== 'running') return
+      
+      const inactiveTime = (Date.now() - agentLastActivity) / 1000
+      inactiveSeconds.value = Math.round(inactiveTime)
+      
+      if (inactiveTime > 60) {
+        isInactive.value = true
+        console.warn(`[SessionStore] Agent inactive for ${inactiveSeconds.value}s - consider aborting`)
       }
-    }, 10000)
+    }, 5000) // Check every 5 seconds
+  }
+
+  // Stop watchdog
+  function stopAgentWatchdog() {
+    if (agentWatchdogTimer) {
+      clearInterval(agentWatchdogTimer)
+      agentWatchdogTimer = null
+    }
+    isInactive.value = false
+    inactiveSeconds.value = 0
   }
 
   /**
@@ -574,6 +589,10 @@ export const useSessionStore = defineStore('session', () => {
     steeringMode,
     followUpMode,
     lastError,
+    
+    // Watchdog State
+    isInactive,
+    inactiveSeconds,
 
     // Computed
     currentSessionSnapshot,
@@ -594,6 +613,7 @@ export const useSessionStore = defineStore('session', () => {
     stopStatsRefresh,
     scheduleStatsRefresh,
     resetAgentWatchdog,
+    stopAgentWatchdog,
 
     // Workspace Actions
     setWorkspaces,

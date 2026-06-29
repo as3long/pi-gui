@@ -8,7 +8,7 @@ import LoginDialog from './components/settings/LoginDialog.vue'
 import ExtensionDialog from './components/extension/ExtensionDialog.vue'
 import SessionTree from './components/session/SessionTree.vue'
 import { FileTree } from './components/files'
-import { startEventListeners, clearEventHandlers, onPiEvent, piNewSession, piCycleModel, piStart, piGetState, piReadDirectory, piIsRunning, piDeleteFile, piGetSessionStats, piAbort } from './ipc/bridge'
+import { piStartStreaming, clearEventHandlers, onPiEvent, piNewSession, piCycleModel, piGetState, piReadDirectory, piIsRunning, piDeleteFile, piGetSessionStats, piAbort } from './ipc/bridge'
 import { confirm } from '@tauri-apps/plugin-dialog'
 import { useChatStore } from './stores/chat'
 import ToastContainer from './components/common/ToastContainer.vue'
@@ -32,7 +32,7 @@ const showFiles = ref(false)
 // File tree state
 const fileTreeData = ref<any[]>([])
 const openFile = ref<{ path: string; name: string; content: string; language: string; modified: boolean } | null>(null)
-let cleanupEvents: (() => void) | null = null
+let cleanupStreaming: (() => void) | null = null
 
 async function loadDirectory(path: string) {
   try {
@@ -132,10 +132,8 @@ onMounted(async () => {
   // Set CSS class for dark mode
   updateTheme()
 
-  // Start event listeners
-  logger.startMeasure('start-event-listeners')
-  cleanupEvents = await startEventListeners()
-  logger.endMeasure('start-event-listeners')
+  // Event listeners are set up via Channel API when pi starts streaming
+  // No need to start legacy event listeners
 
   // Register event handlers for stores
 
@@ -177,11 +175,11 @@ onMounted(async () => {
       sessionStore.isRunning = true
       logger.info('Pi is already running')
     } else {
-      logger.startMeasure('pi-start')
-      await piStart(cwd)
-      logger.endMeasure('pi-start', 5000) // Warn if takes longer than 5s
+      logger.startMeasure('pi-start-streaming')
+      cleanupStreaming = await piStartStreaming(cwd)
+      logger.endMeasure('pi-start-streaming', 5000)
       sessionStore.isRunning = true
-      logger.info('Pi process started successfully')
+      logger.info('Pi process started with Channel API streaming')
     }
     
     // Fire-and-forget: state, stats, and directory in parallel (don't block UI)
@@ -218,8 +216,8 @@ onUnmounted(() => {
   logger.info('Application unmounting...')
   watchdog.stop()
   sessionStore.stopStatsRefresh()
-  if (cleanupEvents) {
-    cleanupEvents()
+  if (cleanupStreaming) {
+    cleanupStreaming()
   }
   clearEventHandlers()
   window.removeEventListener('unhandledrejection', handleUnhandledRejection)
@@ -372,7 +370,7 @@ async function handleReconnect() {
   
   try {
     const cwd = settingsStore.cwd || 'C:\\Users\\huoying\\code'
-    await piStart(cwd)
+    cleanupStreaming = await piStartStreaming(cwd)
     sessionStore.isRunning = true
     await piGetState()
     console.log('[PiGUI] Reconnected to pi')

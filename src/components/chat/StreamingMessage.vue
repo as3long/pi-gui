@@ -1,35 +1,89 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { useChatStore } from '../../stores/chat'
-import { extractCodeBlocks, getTextWithoutCodeBlocks, computeDiffLines, type DiffLine } from './utils'
 import DiffRenderer from '../common/DiffRenderer.vue'
+import type { DiffLine } from './utils'
+import { computeDiffLines } from './utils'
 
 const chatStore = useChatStore()
 
 const streamingMessage = computed(() => chatStore.streamingMessage)
 
-const textContent = computed(() => streamingMessage.value.text)
-const thinkingContent = computed(() => streamingMessage.value.thinking)
+// ── Debounced display text (150ms) ──
+// The raw streaming text updates every 16ms, but we only need to re-render
+// the expensive markdown/diff every 150ms for smooth display.
+const displayText = ref('')
+const displayThinking = ref('')
+let displayTimer: ReturnType<typeof setTimeout> | null = null
+
+const STREAMING_RENDER_INTERVAL = 150 // ms
+
+function flushDisplay() {
+  displayText.value = streamingMessage.value.text
+  displayThinking.value = streamingMessage.value.thinking
+  displayTimer = null
+}
+
+watch(
+  () => streamingMessage.value.text,
+  () => {
+    if (!displayTimer) {
+      displayTimer = setTimeout(flushDisplay, STREAMING_RENDER_INTERVAL)
+    }
+  }
+)
+
+watch(
+  () => streamingMessage.value.thinking,
+  () => {
+    if (!displayTimer) {
+      displayTimer = setTimeout(flushDisplay, STREAMING_RENDER_INTERVAL)
+    }
+  }
+)
+
+// Flush immediately when streaming completes
+watch(
+  () => streamingMessage.value.isComplete,
+  (complete) => {
+    if (complete && displayTimer) {
+      clearTimeout(displayTimer)
+      displayTimer = null
+      displayText.value = streamingMessage.value.text
+      displayThinking.value = streamingMessage.value.thinking
+    }
+  }
+)
+
 const toolCalls = computed(() => streamingMessage.value.toolCalls)
 
-const codeBlocks = computed(() => extractCodeBlocks(textContent.value))
-const textWithoutCode = computed(() => getTextWithoutCodeBlocks(textContent.value))
+// ── Tool result truncation ──
+// During streaming, large tool results can cause significant lag.
+// We truncate to a reasonable limit and show a notice.
+const MAX_STREAMING_RESULT_CHARS = 8192  // 8KB during streaming
 
-// Diff cache
+function getTruncatedResult(result: string): string {
+  if (result.length <= MAX_STREAMING_RESULT_CHARS) return result
+  return result.slice(-MAX_STREAMING_RESULT_CHARS) + '\n\n--- 输出过长，已截断显示最新内容 ---'
+}
+
+// ── Edit tool diff (lazy, only for complete tool calls or small args) ──
 const diffCache = new Map<string, DiffLine[]>()
 
-function getEditDiff(args: string): DiffLine[] {
-  if (diffCache.has(args)) {
-    return diffCache.get(args)!
-  }
+function getEditDiff(tcId: string, args: string, isComplete: boolean): DiffLine[] {
+  // Skip expensive diff during streaming for large args
+  if (!isComplete && args.length > 4096) return []
+
+  const cacheKey = `${tcId}:${args.length}`
+  if (diffCache.has(cacheKey)) return diffCache.get(cacheKey)!
 
   try {
     const parsed = JSON.parse(args)
     if (!parsed.oldText || !parsed.newText) return []
 
     const lines = computeDiffLines(String(parsed.oldText), String(parsed.newText))
-    if (diffCache.size > 50) diffCache.clear()
-    diffCache.set(args, lines)
+    if (diffCache.size > 20) diffCache.clear()
+    diffCache.set(cacheKey, lines)
     return lines
   } catch {
     return []
@@ -61,20 +115,16 @@ function getToolIcon(name: string): string {
       <div class="message-label">Pi</div>
       <div class="message-bubble assistant-bubble streaming-bubble">
         <!-- Thinking block -->
-        <div v-if="thinkingContent" class="thinking-block">
+        <div v-if="displayThinking" class="thinking-block">
           <details open>
             <summary class="thinking-header">🤔 Thinking</summary>
-            <div class="thinking-content">{{ thinkingContent }}</div>
+            <div class="thinking-content">{{ displayThinking }}</div>
           </details>
         </div>
 
-        <!-- Text content -->
-        <div v-if="textContent" class="text-content">
-          <DiffRenderer :text="textWithoutCode" />
-          <div v-for="(block, idx) in codeBlocks" :key="idx" class="code-block">
-            <div class="code-header">{{ block.language || 'code' }}</div>
-            <pre class="code-content"><code>{{ block.code }}</code></pre>
-          </div>
+        <!-- Text content - use debounced display text with DiffRenderer -->
+        <div v-if="displayText" class="text-content">
+          <DiffRenderer :text="displayText" />
           <span class="cursor-blink">▊</span>
         </div>
         <div v-else class="text-content">
@@ -91,16 +141,16 @@ function getToolIcon(name: string): string {
             <div class="tool-call-header">
               <span class="tool-icon">{{ getToolIcon(tc.name) }}</span>
               <span class="tool-name">{{ tc.name }}</span>
-              <span v-if="tc.name === 'edit'" class="diff-badge">diff</span>
+              <span v-if="tc.name === 'edit' && tc.args.length < 4096" class="diff-badge">diff</span>
               <span v-if="tc.isComplete" class="tool-status done">✓</span>
               <span v-else class="tool-status running">⋯</span>
             </div>
-            <!-- Edit tool diff view -->
-            <div v-if="tc.name === 'edit' && getEditDiff(tc.args).length > 0" class="edit-diff">
+            <!-- Edit tool diff view (only when complete or small) -->
+            <div v-if="tc.name === 'edit' && getEditDiff(tc.id, tc.args, tc.isComplete).length > 0" class="edit-diff">
               <div v-if="getEditFilePath(tc.args)" class="diff-file-path">📄 {{ getEditFilePath(tc.args) }}</div>
               <div class="diff-content">
                 <div
-                  v-for="(line, idx) in getEditDiff(tc.args)"
+                  v-for="(line, idx) in getEditDiff(tc.id, tc.args, tc.isComplete)"
                   :key="idx"
                   class="diff-line"
                   :class="'diff-line--' + line.type"
@@ -115,8 +165,9 @@ function getToolIcon(name: string): string {
               <summary>Arguments</summary>
               <pre class="tool-args">{{ tc.args }}</pre>
             </details>
+            <!-- Tool result (truncated during streaming) -->
             <div v-if="tc.result" class="tool-result">
-              <DiffRenderer :text="tc.result" />
+              <DiffRenderer :text="getTruncatedResult(tc.result)" />
             </div>
           </div>
         </div>
@@ -190,30 +241,6 @@ function getToolIcon(name: string): string {
 
 .text-content {
   white-space: pre-wrap;
-}
-
-.code-block {
-  margin: 8px 0;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.code-header {
-  padding: 4px 12px;
-  background: var(--header-bg);
-  font-size: 11px;
-  color: var(--muted-color);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.code-content {
-  margin: 0;
-  padding: 12px;
-  background: var(--code-bg);
-  font-family: 'SF Mono', monospace;
-  font-size: 12px;
-  overflow-x: auto;
 }
 
 .cursor-blink {
@@ -358,5 +385,7 @@ function getToolIcon(name: string): string {
   background: var(--code-bg);
   font-size: 11px;
   border-top: 1px solid var(--border-color);
+  max-height: 300px;
+  overflow-y: auto;
 }
 </style>

@@ -26,6 +26,15 @@
 - 🎨 **Dark/Light Themes** - Automatic theme switching based on system preference
 - 💻 **Code Editor** - Built-in CodeMirror 6 editor with syntax highlighting
 
+### Performance Optimizations
+- ⚡ **Channel API Streaming** - Efficient Tauri Channel API for low-overhead streaming
+- 🎯 **Smart Event Routing** - High-frequency events skip event bus, reducing IPC traffic
+- 🔄 **Rendering Debounce** - 150ms debounce for streaming content, reducing Vue re-renders
+- 📦 **Large Output Truncation** - Tool results capped at 8KB during streaming
+- 🛡️ **Safe Diff Detection** - Skips diff analysis for texts > 50KB
+- 📝 **Append-only Logging** - Efficient log writes without reading entire file
+- ⏱️ **Stats Throttling** - Reduced stats refresh frequency (8s vs 3s)
+
 ### Architecture & Design
 - 🏗️ **PureMVC Architecture** - Clean separation of concerns with PureMVC framework
 - 🧩 **Modular Components** - Reusable Vue components with clear responsibilities
@@ -48,6 +57,7 @@
 - 🖼️ **Image Paste** - Paste images directly into chat
 - 📁 **Directory Creation** - Create directories from the GUI
 - 🔐 **Authentication** - Built-in login dialog for provider authentication
+- ⚠️ **Inactivity Detection** - Watchdog with abort button for stuck operations
 
 ### Keyboard Shortcuts
 
@@ -55,8 +65,10 @@
 |----------|--------|
 | `Ctrl/⌘ + N` | New Session |
 | `Ctrl/⌘ + /` | Toggle Sessions Panel |
+| `Ctrl/⌘ + B` | Toggle Files Panel |
 | `Ctrl/⌘ + ,` | Open Settings |
 | `Ctrl/⌘ + K` | Cycle Model |
+| `Ctrl/⌘ + S` | Save File |
 | `Escape` | Close Panel/Dialog |
 
 ---
@@ -110,6 +122,7 @@ pi-gui/
 │   │   │   ├── StreamingMessage.vue # Streaming message display
 │   │   │   ├── ToolCallView.vue  # Tool call visualization
 │   │   │   ├── ToolResultMessage.vue # Tool result display
+│   │   │   ├── StatusBar.vue     # Status bar with stats & watchdog
 │   │   │   ├── EmptyState.vue    # Empty state display
 │   │   │   └── utils.ts         # Chat utilities
 │   │   ├── input/                # Input components
@@ -128,16 +141,16 @@ pi-gui/
 │   │   ├── extension/            # Extension UI
 │   │   │   └── ExtensionDialog.vue # Extension dialogs
 │   │   └── common/               # Shared components
-│   │       ├── MarkdownRenderer.vue # Markdown rendering
-│   │       ├── DiffRenderer.vue  # Diff visualization
+│   │       ├── MarkdownRenderer.vue # Markdown rendering (debounced)
+│   │       ├── DiffRenderer.vue  # Diff visualization (safe thresholds)
 │   │       └── DiffEditor.vue    # Diff editor
 │   ├── stores/                   # Pinia state management
 │   │   ├── chat.ts               # Chat messages & streaming
-│   │   ├── session.ts            # Session state
+│   │   ├── session.ts            # Session state & watchdog
 │   │   ├── settings.ts           # User settings
 │   │   └── ui.ts                 # Extension UI state
 │   ├── ipc/                      # Tauri IPC bridge
-│   │   ├── bridge.ts             # Command wrappers
+│   │   ├── bridge.ts             # Command wrappers & Channel API
 │   │   └── types.ts              # TypeScript types
 │   ├── mvc/                      # PureMVC architecture
 │   │   ├── AppFacade.ts          # Application facade
@@ -148,18 +161,23 @@ pi-gui/
 │   │   └── proxy/                # PureMVC proxies
 │   ├── types/                    # TypeScript types
 │   ├── utils/                    # Utility functions
-│   │   ├── logger.ts             # Logging utilities
+│   │   ├── logger.ts             # Append-only logging
 │   │   └── version.ts            # Version utilities
 │   ├── App.vue                   # Root component
 │   └── main.ts                   # Entry point
 ├── src-tauri/                    # Backend (Rust)
 │   ├── src/
-│   │   ├── lib.rs                # Tauri commands
+│   │   ├── lib.rs                # Tauri command registration
 │   │   ├── commands/             # Tauri commands
-│   │   │   └── fs.rs            # File system commands
+│   │   │   ├── process.rs        # Process management & streaming
+│   │   │   ├── messages.rs       # Message commands
+│   │   │   ├── session.rs        # Session commands
+│   │   │   ├── fs.rs             # File system commands (append, truncate)
+│   │   │   ├── config.rs         # Configuration commands
+│   │   │   └── model.rs          # Model commands
 │   │   ├── rpc/
-│   │   │   ├── client.rs         # Pi RPC client
-│   │   │   └── protocol.rs       # Protocol types
+│   │   │   ├── client.rs         # Pi RPC client (Channel API)
+│   │   │   └── protocol.rs       # Protocol types (StreamEvent)
 │   │   ├── state.rs              # Application state
 │   │   └── main.rs               # Entry point
 │   ├── icons/                    # App icons
@@ -169,6 +187,36 @@ pi-gui/
 │   └── generate-icons.mjs        # Icon generation
 └── package.json                  # Node.js dependencies
 ```
+
+---
+
+## ⚡ Performance Architecture
+
+### Channel API Streaming
+
+Pi GUI uses Tauri's Channel API for efficient streaming:
+
+```
+┌─────────────┐    Channel<StreamEvent>    ┌─────────────┐
+│   Rust      │ ─────────────────────────→ │   Frontend  │
+│   Backend   │                            │   Vue App   │
+└─────────────┘                            └─────────────┘
+       │                                          │
+       │  pi stdout                               │  channel.onmessage
+       │  (JSONL events)                          │  (parsed events)
+       ▼                                          ▼
+  ┌─────────┐                              ┌──────────┐
+  │   pi    │                              │  Stores  │
+  │ process │                              │ (Chat,   │
+  └─────────┘                              │ Session) │
+                                           └──────────┘
+```
+
+### Optimization Layers
+
+1. **IPC Layer** - Channel API replaces event broadcasting
+2. **Rendering Layer** - 150ms debounce + large text truncation
+3. **Background Layer** - Append-only logging + throttled stats
 
 ---
 
@@ -197,7 +245,7 @@ Toggle between dark and light themes in **Settings > General > Dark Mode**.
 
 - **Frontend**: Vue 3, TypeScript, Pinia, Vite, PureMVC
 - **Backend**: Rust, Tauri 2
-- **Protocol**: JSON-RPC over stdin/stdout
+- **Protocol**: JSON-RPC over stdin/stdout with Channel API streaming
 
 ### Available Scripts
 
@@ -233,8 +281,10 @@ This generates:
 
 | Command | Description |
 |---------|-------------|
-| `pi_start` | Start the pi subprocess |
+| `pi_start` | Start pi process (legacy event mode) |
+| `pi_start_streaming` | Start pi with Channel API streaming |
 | `pi_stop` | Stop the pi subprocess |
+| `pi_is_running` | Check if pi is running |
 | `pi_prompt` | Send a message |
 | `pi_steer` | Steer during streaming |
 | `pi_follow_up` | Send follow-up message |
@@ -245,19 +295,26 @@ This generates:
 | `pi_set_model` | Change model |
 | `pi_cycle_model` | Cycle through models |
 | `pi_set_thinking_level` | Set thinking level |
+| `pi_get_session_stats` | Get session statistics |
 | `pi_read_session_metadata` | Read session metadata |
 | `create_dir_all` | Create directory and parent directories |
+| `append_to_file` | Append content to file (efficient) |
+| `truncate_file` | Clear file contents |
+| `get_file_size` | Get file size in bytes |
 
-### RPC Events
+### RPC Events (via Channel)
 
-| Event | Description |
-|-------|-------------|
-| `agent_start` | Agent started processing |
-| `agent_end` | Agent finished processing |
-| `message_update` | Streaming message update |
-| `tool_execution_start` | Tool call started |
-| `tool_execution_end` | Tool call completed |
-| `extension_ui_request` | Extension needs UI response |
+| Event | Description | Frequency |
+|-------|-------------|-----------|
+| `message_update` | Streaming message delta | High |
+| `tool_execution_update` | Tool output streaming | High |
+| `agent_start` | Agent started processing | Low |
+| `agent_end` | Agent finished processing | Low |
+| `message_end` | Message completed | Low |
+| `tool_execution_start` | Tool call started | Medium |
+| `tool_execution_end` | Tool call completed | Medium |
+| `extension_ui_request` | Extension needs UI response | Low |
+| `response` | Command response | Low |
 
 ---
 

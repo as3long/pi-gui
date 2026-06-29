@@ -17,6 +17,7 @@ pub fn run() {
         // Async command handlers - all commands are async to prevent UI blocking
         .invoke_handler(tauri::generate_handler![
             commands::pi_start,
+            commands::pi_start_streaming,
             commands::pi_stop,
             commands::pi_is_running,
             commands::pi_prompt,
@@ -62,6 +63,9 @@ pub fn run() {
             commands::pi_respond_to_host_ui_request,
             commands::pi_close_session,
             commands::create_dir_all,
+            commands::append_to_file,
+            commands::truncate_file,
+            commands::get_file_size,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

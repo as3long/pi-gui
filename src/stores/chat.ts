@@ -41,6 +41,10 @@ export const useChatStore = defineStore('chat', () => {
   let bufferedText = ''
   let bufferedThinking = ''
   let streamingThrottleTimer: ReturnType<typeof setTimeout> | null = null
+// Throttle for tool execution updates to avoid excessive reactive churn
+const TOOL_EXEC_THROTTLE_MS = 100
+let toolExecThrottleTimer: ReturnType<typeof setTimeout> | null = null
+let pendingToolExecUpdates: Map<string, string> = new Map()
 
   // Load all sessions from localStorage on init
   function loadAllSessions(): Map<string, AgentMessage[]> {
@@ -262,14 +266,42 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function flushToolExecUpdates() {
+    if (pendingToolExecUpdates.size === 0) {
+      toolExecThrottleTimer = null
+      return
+    }
+    // Batch apply all pending updates in one reactive tick
+    const updates = new Map(pendingToolExecUpdates)
+    pendingToolExecUpdates.clear()
+    toolExecThrottleTimer = null
+
+    for (const [tcId, text] of updates) {
+      const tc = streamingMessage.value.toolCalls.find((t) => t.id === tcId)
+      if (tc) {
+        tc.result = (tc.result || '') + text
+      }
+    }
+  }
+
   function onToolExecutionUpdate(event: RpcEvent) {
     if (event.type !== 'tool_execution_update') return
-    // Support both camelCase and snake_case field names
     const toolCallId = (event as any).toolCallId || (event as any).tool_call_id
     const text = (event as any).partialResult?.content?.[0]?.text || ''
-    const tc = streamingMessage.value.toolCalls.find((t) => t.id === toolCallId)
-    if (tc) {
-      tc.result = (tc.result || '') + text
+    if (!toolCallId || !text) return
+
+    // Buffer updates and flush in batches
+    const existing = pendingToolExecUpdates.get(toolCallId) || ''
+    pendingToolExecUpdates.set(toolCallId, existing + text)
+
+    if (!toolExecThrottleTimer) {
+      // Apply first update immediately for responsiveness, then throttle
+      const tc = streamingMessage.value.toolCalls.find((t) => t.id === toolCallId)
+      if (tc) {
+        tc.result = (tc.result || '') + text
+      }
+      pendingToolExecUpdates.delete(toolCallId)
+      toolExecThrottleTimer = setTimeout(flushToolExecUpdates, TOOL_EXEC_THROTTLE_MS)
     }
   }
 
@@ -292,17 +324,20 @@ export const useChatStore = defineStore('chat', () => {
   function finalizeStreaming() {
     // Prevent double finalization
     if (isFinalizing || streamingMessage.value.isComplete) {
-      console.log('[ChatStore] Skipping finalize - already finalized or finalizing')
       return
     }
     isFinalizing = true
-    console.log('[ChatStore] finalizeStreaming called')
     
     // Flush any remaining buffered content first
     flushBufferedStreaming()
     if (streamingThrottleTimer) {
       clearTimeout(streamingThrottleTimer)
       streamingThrottleTimer = null
+    }
+    pendingToolExecUpdates.clear()
+    if (toolExecThrottleTimer) {
+      clearTimeout(toolExecThrottleTimer)
+      toolExecThrottleTimer = null
     }
     // Build messages in chronological order:
     // 1. Assistant text/thinking (if any)
@@ -332,7 +367,6 @@ export const useChatStore = defineStore('chat', () => {
       })
       addedTcIds.add(firstTc.id)
 
-      console.log('[ChatStore] Content to add:', headerContent.length, 'items')
       newMessages.push({
         role: 'assistant',
         content: headerContent,
@@ -350,7 +384,6 @@ export const useChatStore = defineStore('chat', () => {
       }
     } else if (headerContent.length > 0) {
       // No tool calls, just text/thinking
-      console.log('[ChatStore] Content to add:', headerContent.length, 'items')
       newMessages.push({
         role: 'assistant',
         content: headerContent,
@@ -478,12 +511,17 @@ export const useChatStore = defineStore('chat', () => {
           toolCalls: [],
           isComplete: false,
         }
+        // Reset tool execution throttle
+        pendingToolExecUpdates.clear()
+        if (toolExecThrottleTimer) {
+          clearTimeout(toolExecThrottleTimer)
+          toolExecThrottleTimer = null
+        }
         // Start watchdog - if no activity for 120s, allow abort
         startStreamingWatchdog()
         break
 
       case 'agent_end': {
-        console.log('[ChatStore] Agent ended, finalizing...')
         stopStreamingWatchdog()
         // Use agent_end messages as fallback for tool calls
         const agentMsgs = (event as any).messages
@@ -492,8 +530,7 @@ export const useChatStore = defineStore('chat', () => {
             if (m?.role === 'assistant' && Array.isArray(m.content)) {
               for (const c of m.content) {
                 if (c.type === 'toolCall' && c.id && !streamingMessage.value.toolCalls.find(t => t.id === c.id)) {
-                  console.log('[ChatStore] Capturing tool call from agent_end:', c.name, c.id)
-                  streamingMessage.value.toolCalls.push({
+                          streamingMessage.value.toolCalls.push({
                     id: c.id,
                     name: c.name || '',
                     args: typeof c.arguments === 'string' ? c.arguments : JSON.stringify(c.arguments || {}),
@@ -523,7 +560,6 @@ export const useChatStore = defineStore('chat', () => {
 
       case 'message_end': {
         const endMsg = (event as any).message
-        console.log('[ChatStore] Message end, role:', endMsg?.role, 'customType:', endMsg?.customType)
         
         // Handle assistant messages (streaming finalize)
         if (endMsg?.role === 'assistant' && Array.isArray(endMsg.content)) {
@@ -534,8 +570,7 @@ export const useChatStore = defineStore('chat', () => {
             } else if (c.type === 'thinking' && c.thinking) {
               streamingMessage.value.thinking = c.thinking
             } else if (c.type === 'toolCall' && c.id && !streamingMessage.value.toolCalls.find(t => t.id === c.id)) {
-              console.log('[ChatStore] Capturing tool call from message_end:', c.name, c.id)
-              streamingMessage.value.toolCalls.push({
+                  streamingMessage.value.toolCalls.push({
                 id: c.id,
                 name: c.name || '',
                 args: typeof c.arguments === 'string' ? c.arguments : JSON.stringify(c.arguments || {}),
@@ -546,12 +581,10 @@ export const useChatStore = defineStore('chat', () => {
           }
           
           // Finalize this message (add to messages array)
-          console.log('[ChatStore] Finalizing from message_end')
-          finalizeStreaming()
+            finalizeStreaming()
         }
         // Handle custom messages from extensions (e.g., weather results)
         else if (endMsg?.customType && endMsg?.content) {
-          console.log('[ChatStore] Adding custom message:', endMsg.customType)
           const text = typeof endMsg.content === 'string' 
             ? endMsg.content 
             : Array.isArray(endMsg.content) 

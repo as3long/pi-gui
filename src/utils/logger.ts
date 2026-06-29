@@ -1,6 +1,6 @@
 /**
  * Logger utility for debugging and diagnosing UI freezes
- * Logs are written to a file on disk for easy sharing and debugging
+ * Uses efficient append mode to avoid reading entire log file on each flush.
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -12,6 +12,7 @@ const LOG_DIR = '.pi-gui'
 const LOG_FILE = 'debug.log'
 let logFilePath: string | null = null
 let initPromise: Promise<string | null> | null = null
+let currentLogSize = 0 // Track approximate log size
 
 // In-memory log buffer for performance (flushed to disk periodically)
 const logBuffer: string[] = []
@@ -23,35 +24,33 @@ async function getHomeDir(): Promise<string> {
   try {
     return await invoke<string>('pi_get_home_dir')
   } catch {
-    // Fallback for Windows
-    return 'C:\\\\Users\\\\' + (window as any).__TAURI__?.env?.user || 'huoying'
+    return 'C:\\Users\\huoying'
   }
 }
 
-// Initialize log file path
+// Initialize log file path and check current size
 async function initLogPath(): Promise<string | null> {
   if (logFilePath) return logFilePath
   if (initPromise) return initPromise
   
-  // Initialization logging (removed raw console)
-  
   initPromise = (async () => {
     try {
       const home = await getHomeDir()
-    
-      
-      const logDirPath = `${home}\\\\${LOG_DIR}`
-      logFilePath = `${logDirPath}\\\\${LOG_FILE}`
-      
-    
-    
+      const logDirPath = `${home}\\${LOG_DIR}`
+      logFilePath = `${logDirPath}\\${LOG_FILE}`
       
       // Create directory using Rust command
       try {
         await invoke('create_dir_all', { path: logDirPath })
-      
       } catch (e) {
+        // Directory might already exist
+      }
       
+      // Get current file size
+      try {
+        currentLogSize = await invoke<number>('get_file_size', { path: logFilePath })
+      } catch {
+        currentLogSize = 0
       }
       
       return logFilePath
@@ -64,7 +63,7 @@ async function initLogPath(): Promise<string | null> {
   return initPromise
 }
 
-// Flush buffer to disk
+// Flush buffer to disk using efficient append mode
 async function flushLogs() {
   if (isFlushing || logBuffer.length === 0) return
   
@@ -76,33 +75,26 @@ async function flushLogs() {
     const path = await initLogPath()
     if (!path) {
       console.warn('[Logger] No log path available, keeping in memory')
-      // Put back to buffer to retry later
       logBuffer.unshift(...logsToWrite)
       isFlushing = false
       return
     }
     
-    // Read existing file using invoke
-    let existingContent = ''
-    try {
-      const { readTextFile } = await import('@tauri-apps/plugin-fs')
-      existingContent = await readTextFile(path)
-    } catch {
-      // File doesn't exist yet, that's fine
+    // Check if we need to rotate
+    if (currentLogSize > MAX_LOG_SIZE) {
+      // Truncate to last 80% of max size
+      await invoke('truncate_file', { path })
+      currentLogSize = 0
+      // Add rotation marker
+      const marker = '... [LOG ROTATED - OLDER ENTRIES REMOVED] ...\n'
+      await invoke('append_to_file', { path, content: marker })
+      currentLogSize += marker.length
     }
     
-    // Rotate log if it's too big
-    if (existingContent.length > MAX_LOG_SIZE) {
-      const keepStart = Math.floor(existingContent.length * 0.8)
-      existingContent = '... [LOG ROTATED - OLDER ENTRIES REMOVED] ...\n' + 
-                        existingContent.substring(keepStart)
-    }
-    
-    const newContent = existingContent + logsToWrite.join('\n') + '\n'
-    
-    // Write using Tauri fs plugin
-    const { writeTextFile } = await import('@tauri-apps/plugin-fs')
-    await writeTextFile(path, newContent)
+    // Append new logs (efficient - no read needed)
+    const content = logsToWrite.join('\n') + '\n'
+    await invoke('append_to_file', { path, content })
+    currentLogSize += content.length
     
   } catch (e) {
     console.error('[Logger] Failed to flush logs:', e)
@@ -113,13 +105,13 @@ async function flushLogs() {
   }
 }
 
-// Schedule flush after a short delay to batch writes
+// Schedule flush after a delay to batch writes
 function scheduleFlush() {
   if (flushTimeout) return
   flushTimeout = window.setTimeout(async () => {
     flushTimeout = null
     await flushLogs()
-  }, 1000) as unknown as number
+  }, 2000) as unknown as number  // 2 seconds instead of 1 second
 }
 
 // Force flush all pending logs immediately
@@ -213,7 +205,7 @@ export async function getLogFilePath(): Promise<string | null> {
   return await initLogPath()
 }
 
-// Read current log content
+// Read current log content (only when user explicitly requests it)
 export async function getLogContent(): Promise<string> {
   const path = await initLogPath()
   if (!path) return 'Log file not initialized'
@@ -275,9 +267,6 @@ setTimeout(async () => {
     const startupLog = new Logger('Logger')
     startupLog.info('Logger system initialized')
     startupLog.info(`Log file location: ${path}`)
-    // init done
-  } else {
-    // init failed
   }
 }, 500)
 

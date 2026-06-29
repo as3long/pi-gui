@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use tokio::io::AsyncWriteExt;
 
 /// Create a directory and all its parent directories (async).
 #[tauri::command]
@@ -168,4 +169,45 @@ fn parse_jsonl(content: &str) -> Result<serde_json::Value, String> {
         }
     }
     Ok(serde_json::Value::Array(messages))
+}
+
+/// Append content to a file (efficient append mode).
+/// Creates the file if it doesn't exist.
+#[tauri::command]
+pub async fn append_to_file(path: String, content: String) -> Result<(), String> {
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .await
+        .map_err(|e| format!("Failed to open file for append: {}", e))?;
+    
+    file.write_all(content.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to append to file: {}", e))?;
+    
+    Ok(())
+}
+
+/// Truncate a file (clear its contents).
+#[tauri::command]
+pub async fn truncate_file(path: String) -> Result<(), String> {
+    let file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .await
+        .map_err(|e| format!("Failed to truncate file: {}", e))?;
+    
+    drop(file);
+    Ok(())
+}
+
+/// Get file size.
+#[tauri::command]
+pub async fn get_file_size(path: String) -> Result<u64, String> {
+    let meta = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    Ok(meta.len())
 }

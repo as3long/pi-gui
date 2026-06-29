@@ -1,6 +1,16 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+// ── Streaming Event (sent through Tauri Channel) ──
+
+/// A streaming event that wraps a raw JSON line from pi's stdout.
+/// This is sent through the Tauri Channel API for efficient streaming.
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamEvent {
+    /// The raw JSON line from pi's stdout
+    pub payload: String,
+}
+
 // ── RPC Commands (sent to pi's stdin) ──
 
 #[derive(Debug, Serialize)]

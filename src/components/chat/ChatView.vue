@@ -7,7 +7,7 @@ import { computed } from 'vue'
 import { useChatStore } from '../../stores/chat'
 import { useSessionStore } from '../../stores/session'
 import { useSettingsStore } from '../../stores/settings'
-import { piPrompt, piSteer, piAbort, piStart, piNewSession, piGetSessionStats, piCompactSession, piGetHomeDir, piReadDirectory } from '../../ipc/bridge'
+import { piPrompt, piSteer, piAbort, piStart, piNewSession, piGetSessionStats, piCompactSession } from '../../ipc/bridge'
 import { watch, ref } from 'vue'
 import { createLogger } from '../../utils/logger'
 import { usePureMVC, NotificationNames } from '../../mvc'
@@ -20,6 +20,7 @@ const settingsStore = useSettingsStore()
 const { facade } = usePureMVC()
 
 let messageIdCounter = 0
+let pendingNewSessionPromise: Promise<void> | null = null
 const showCwdEditor = ref(false)
 const cwdInput = ref(settingsStore.cwd)
 
@@ -33,7 +34,17 @@ const currentCwd = computed(() => {
 
 async function onSend(message: string) {
   logger.info('onSend called', { messageLength: message.length })
-  
+
+  const id = `msg-${++messageIdCounter}`
+  logger.info(`Sending message with id: ${id}`)
+
+  // Add user message to chat immediately so the UI stays responsive
+  chatStore.addMessage({
+    role: 'user',
+    content: message,
+    timestamp: Date.now(),
+  })
+
   // Auto-start pi if not running
   if (!sessionStore.isRunning) {
     try {
@@ -49,42 +60,29 @@ async function onSend(message: string) {
     }
   }
 
-  // If current session is temp, create real session on backend first
+  // If current session is temp, wait for the backend session created by onNewSession
   if (chatStore.isCurrentSessionTemp) {
-    logger.info('Creating real session for temp chat...')
+    logger.info('Waiting for backend session...')
     try {
-      await piNewSession()
-      // Wait for session file to be written
-      await new Promise(resolve => setTimeout(resolve, 500))
-      // Find the newest session
-      const homeDir = await piGetHomeDir()
-      if (homeDir) {
-        const sessionDir = `${homeDir}/.pi/agent/sessions`
-        const sessionFiles = await piReadDirectory(sessionDir, 2)
-        let newestId = ''
-        let newestPath = ''
-        if (Array.isArray(sessionFiles)) {
-          for (const projectDir of sessionFiles) {
-            if (projectDir.type === 'directory' && projectDir.children) {
-              for (const sessionFile of projectDir.children) {
-                if (sessionFile.name?.endsWith('.jsonl')) {
-                  const parts = sessionFile.name.replace('.jsonl', '').split('_')
-                  const sid = parts[1] || ''
-                  if (sid > newestId) {
-                    newestId = sid
-                    newestPath = sessionFile.path
-                  }
-                }
-              }
-            }
-          }
-        }
-        if (newestId) {
-          chatStore.replaceTempSession(newestId)
-          sessionStore.currentSessionId = newestId
-          sessionStore.currentSessionFile = newestPath
-          logger.info('Real session created:', newestId)
-        }
+      if (pendingNewSessionPromise) {
+        await pendingNewSessionPromise
+        pendingNewSessionPromise = null
+      } else {
+        await piNewSession()
+      }
+
+      // Give the event loop time to process the response event
+      // which sets sessionStore.currentSessionId via sessionStore.handleEvent
+      if (!sessionStore.currentSessionId) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      if (!sessionStore.currentSessionId) {
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+
+      if (sessionStore.currentSessionId) {
+        chatStore.replaceTempSession(sessionStore.currentSessionId)
+        logger.info('Real session ready:', sessionStore.currentSessionId)
       }
       facade.sendNotification(NotificationNames.SESSION_CREATED)
     } catch (e) {
@@ -92,20 +90,8 @@ async function onSend(message: string) {
     }
   }
 
-  const id = `msg-${++messageIdCounter}`
-  logger.info(`Sending message with id: ${id}`)
-
-  // Add user message to chat immediately
-  chatStore.addMessage({
-    role: 'user',
-    content: message,
-    timestamp: Date.now(),
-  })
-  logger.debug('User message added to chat')
-
   try {
     if (chatStore.isStreaming) {
-      // Queue as steer during streaming
       logger.debug('Sending as steer')
       logger.startMeasure('pi-steer')
       await piSteer(id, message)
@@ -114,10 +100,9 @@ async function onSend(message: string) {
       logger.debug('Sending as prompt')
       logger.startMeasure('pi-prompt')
       await piPrompt(id, message)
-      logger.endMeasure('pi-prompt', 5000) // Warn if takes longer than 5s
+      logger.endMeasure('pi-prompt', 5000)
     }
     logger.info('Message sent successfully')
-    // Refresh stats after sending
     setTimeout(() => piGetSessionStats(), 500)
   } catch (e) {
     logger.error('Failed to send message:', e)
@@ -134,7 +119,14 @@ async function onNewSession() {
   sessionStore.currentSessionId = null
   sessionStore.currentSessionFile = null
   sessionStore.sessionName = 'New Chat'
-  logger.info('New chat created')
+
+  // Create the backend session immediately so it's ready when user sends a message
+  pendingNewSessionPromise = piNewSession().catch(e => {
+    logger.error('Failed to create backend session:', e)
+    pendingNewSessionPromise = null
+  })
+
+  logger.info('New chat created, backend session creation started')
 }
 
 async function onRefreshStats() {
@@ -161,18 +153,31 @@ function saveCwd() {
   showCwdEditor.value = false
 }
 
-// Periodically refresh stats while streaming
+// Periodically refresh stats while streaming (reduced frequency to avoid UI jank)
 let statsInterval: ReturnType<typeof setInterval> | null = null
+let statsRequestPending = false
+
+async function throttledGetSessionStats() {
+  if (statsRequestPending) return
+  statsRequestPending = true
+  try {
+    await piGetSessionStats()
+  } finally {
+    statsRequestPending = false
+  }
+}
+
 watch(() => chatStore.isStreaming, (streaming) => {
   if (streaming) {
-    statsInterval = setInterval(() => piGetSessionStats(), 3000)
+    // 8 seconds instead of 3 seconds to reduce IPC pressure during streaming
+    statsInterval = setInterval(throttledGetSessionStats, 8000)
   } else {
     if (statsInterval) {
       clearInterval(statsInterval)
       statsInterval = null
     }
     // Final refresh when streaming ends
-    piGetSessionStats()
+    throttledGetSessionStats()
   }
 })
 </script>

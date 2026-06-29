@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, Channel } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type {
   RpcEvent,
@@ -19,8 +19,146 @@ import { createLogger } from '../utils/logger'
 
 const logger = createLogger('Bridge')
 
+// ── Streaming Event Type (matches Rust StreamEvent) ──
+interface StreamEvent {
+  payload: string
+}
+
+// ── Streaming State ──
+let streamingChannel: Channel<StreamEvent> | null = null
+let streamingPromise: Promise<unknown> | null = null
+
+// ── Event Handlers ──
+const eventHandlers: Map<string, Array<(event: RpcEvent) => void>> = new Map()
+
+/**
+ * Fast lightweight JSON parsing for high-frequency streaming events
+ */
+function fastParseEventType(payload: string): string {
+  const typeMatch = payload.match(/"type"\s*:\s*"([^"]+)"/)
+  return typeMatch ? typeMatch[1] : ''
+}
+
+/**
+ * Dispatch a parsed event to registered handlers.
+ */
+function dispatchEvent(parsed: RpcEvent): void {
+  const specificHandlers = eventHandlers.get(parsed.type) || []
+  const wildcardHandlers = eventHandlers.get('*') || []
+
+  for (const handler of specificHandlers) {
+    handler(parsed)
+  }
+  for (const handler of wildcardHandlers) {
+    handler(parsed)
+  }
+}
+
+/**
+ * Handle a raw event payload from the channel.
+ */
+function handleRawPayload(payload: string): void {
+  if (!payload) return
+
+  // Fast path: extract event type without full JSON parsing
+  const eventType = fastParseEventType(payload)
+  
+  // Check if we have any handlers for this event type
+  const specificHandlers = eventHandlers.get(eventType) || []
+  const wildcardHandlers = eventHandlers.get('*') || []
+  
+  // Only do full JSON parsing if we have actual handlers
+  if (specificHandlers.length === 0 && wildcardHandlers.length === 0 && eventType !== 'extension_ui_request') {
+    return
+  }
+  
+  // Log important events
+  const importantTypes = ['agent_start', 'agent_end', 'error', 'compaction_start', 'compaction_end']
+  if (importantTypes.includes(eventType)) {
+    logger.debug(`Received event: ${eventType}`)
+  }
+
+  try {
+    // Full parsing only when needed
+    const parsed = JSON.parse(payload) as RpcEvent
+
+    dispatchEvent(parsed)
+
+    // Forward extension UI requests to UI store
+    if (parsed.type === 'extension_ui_request') {
+      const req = parsed as any
+      
+      // Skip non-interactive requests early to avoid unnecessary processing
+      const skipMethods = ['status', 'widget', 'progress', 'status_update', 'setStatus']
+      const hasNoUserContent = !req.title && !req.message && !req.options && !req.placeholder && !req.prefill
+      
+      if (!req.method || skipMethods.includes(req.method) || (hasNoUserContent && req.status_key) || hasNoUserContent) {
+        return
+      }
+      
+      // Handle notify method - show toast notification via window
+      if (req.method === 'notify' && req.message) {
+        if ((window as any).__piNotify) {
+          (window as any).__piNotify('info', req.message)
+        }
+        return
+      }
+      
+      const uiStore = useUiStore()
+      uiStore.setRequest(parsed)
+    }
+  } catch (e) {
+    // Swallow parse errors for high-frequency events to avoid log spam
+  }
+}
+
 // ── Tauri Command Wrappers ──
 
+/**
+ * Start pi process with streaming via Channel API.
+ * This is the preferred method for efficient streaming.
+ * 
+ * @param cwd - Working directory for the pi process
+ * @returns A cleanup function to stop streaming
+ */
+export async function piStartStreaming(cwd: string): Promise<() => void> {
+  // Don't start if already streaming
+  if (streamingChannel && streamingPromise) {
+    logger.warn('Already streaming, ignoring duplicate start')
+    return () => {}
+  }
+
+  logger.info('Starting pi with Channel API streaming', { cwd })
+
+  // Create a new channel
+  const channel = new Channel<StreamEvent>()
+  streamingChannel = channel
+
+  // Set up the message handler
+  channel.onmessage = (event: StreamEvent) => {
+    handleRawPayload(event.payload)
+  }
+
+  // Start the streaming command (this is a long-running command)
+  streamingPromise = invoke('pi_start_streaming', { cwd, channel })
+    .catch((e) => {
+      logger.error('Streaming command failed:', e)
+      cleanup()
+    })
+
+  // Return a cleanup function
+  function cleanup() {
+    streamingChannel = null
+    streamingPromise = null
+  }
+
+  return cleanup
+}
+
+/**
+ * Start pi process with legacy event emission.
+ * @deprecated Use piStartStreaming instead for better performance.
+ */
 export async function piStart(cwd: string): Promise<void> {
   await invoke('pi_start', { cwd })
 }
@@ -244,91 +382,46 @@ export async function piListPackages(): Promise<string[]> {
   return await invoke<string[]>('pi_list_packages')
 }
 
-// ── Event Listeners ──
+// ── Legacy Event Listeners (for backward compatibility) ──
 
 let unlistenRaw: UnlistenFn | null = null
-const eventHandlers: Map<string, Array<(event: RpcEvent) => void>> = new Map()
+let unlistenMessageUpdate: UnlistenFn | null = null
+let unlistenToolExecutionUpdate: UnlistenFn | null = null
 
 /**
- * Fast lightweight JSON parsing for high-frequency streaming events
- * Only parses the 'type' field using string operations to avoid full JSON parsing
- */
-function fastParseEventType(payload: string): string {
-  const typeMatch = payload.match(/"type"\s*:\s*"([^"]+)"/)
-  return typeMatch ? typeMatch[1] : ''
-}
-
-/**
- * Start listening to pi events from the Rust backend.
+ * Start listening to pi events from the Rust backend (legacy mode).
+ * @deprecated Use piStartStreaming instead for better performance.
  * Returns a cleanup function.
  */
 export async function startEventListeners(): Promise<() => void> {
-  console.log('[PiGUI] Starting event listeners...')
-  // Listen to raw JSON lines
-  unlistenRaw = await listen<string>('pi:raw', (event) => {
-    const payload = event.payload
-    if (!payload) return
+  console.log('[PiGUI] Starting legacy event listeners...')
 
-    // Fast path: extract event type without full JSON parsing
-    const eventType = fastParseEventType(payload)
-    
-    // Check if we have any handlers for this event type
-    const specificHandlers = eventHandlers.get(eventType) || []
-    const wildcardHandlers = eventHandlers.get('*') || []
-    
-    // Only do full JSON parsing if we have actual handlers
-    if (specificHandlers.length === 0 && wildcardHandlers.length === 0 && eventType !== 'extension_ui_request') {
-      return
-    }
-    
-    // Log important events
-    const importantTypes = ['agent_start', 'agent_end', 'error', 'compaction_start', 'compaction_end']
-    if (importantTypes.includes(eventType)) {
-      logger.debug(`Received event: ${eventType}`)
-    }
-
-    try {
-      // Full parsing only when needed
-      const parsed = JSON.parse(payload) as RpcEvent
-
-      for (const handler of specificHandlers) {
-        handler(parsed)
-      }
-
-      for (const handler of wildcardHandlers) {
-        handler(parsed)
-      }
-
-      // Forward extension UI requests to UI store (only if we have actual handlers)
-      if (parsed.type === 'extension_ui_request' && (specificHandlers.length > 0 || wildcardHandlers.length > 0)) {
-        const req = parsed as any
-        
-        // Skip non-interactive requests early to avoid unnecessary processing
-        const skipMethods = ['status', 'widget', 'progress', 'status_update', 'setStatus']
-        const hasNoUserContent = !req.title && !req.message && !req.options && !req.placeholder && !req.prefill
-        
-        if (!req.method || skipMethods.includes(req.method) || (hasNoUserContent && req.status_key) || hasNoUserContent) {
-          return
-        }
-        
-        // Handle notify method - show toast notification via window
-        if (req.method === 'notify' && req.message) {
-          if ((window as any).__piNotify) {
-            (window as any).__piNotify('info', req.message)
-          }
-          return
-        }
-        
-        const uiStore = useUiStore()
-        uiStore.setRequest(parsed)
-      }
-    } catch (e) {
-      console.error('[PiGUI] Failed to parse pi event:', e)
-    }
+  // ── High-frequency: message_update ──
+  unlistenMessageUpdate = await listen<string>('pi:message_update', (event) => {
+    handleRawPayload(event.payload)
   })
-  console.log('[PiGUI] Event listeners started')
+
+  // ── High-frequency: tool_execution_update ──
+  unlistenToolExecutionUpdate = await listen<string>('pi:tool_execution_update', (event) => {
+    handleRawPayload(event.payload)
+  })
+
+  // ── Low-frequency: all other events via pi:raw ──
+  unlistenRaw = await listen<string>('pi:raw', (event) => {
+    handleRawPayload(event.payload)
+  })
+
+  console.log('[PiGUI] Legacy event listeners started')
 
   return () => {
+    if (unlistenMessageUpdate) {
+      unlistenMessageUpdate()
+      unlistenMessageUpdate = null
+    }
+    if (unlistenToolExecutionUpdate) {
+      unlistenToolExecutionUpdate()
+      unlistenToolExecutionUpdate = null
+    }
     if (unlistenRaw) {
       unlistenRaw()
       unlistenRaw = null
@@ -341,11 +434,9 @@ export async function startEventListeners(): Promise<() => void> {
  * Use '*' for all events.
  */
 export function onPiEvent(type: string, handler: (event: RpcEvent) => void): () => void {
-  console.log('[PiGUI] Registering event handler for:', type)
   const handlers = eventHandlers.get(type) || []
   handlers.push(handler)
   eventHandlers.set(type, handlers)
-  console.log('[PiGUI] Total handlers for', type, ':', handlers.length)
 
   return () => {
     const hs = eventHandlers.get(type)

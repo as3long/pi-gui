@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { ref, watch } from 'vue'
 import MarkdownIt from 'markdown-it'
 
 const props = defineProps<{
@@ -19,7 +19,6 @@ const md = new MarkdownIt({
   breaks: true,
   highlight: (str: string, lang: string) => {
     try {
-      // Basic escape
       const escaped = str
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -35,7 +34,36 @@ const md = new MarkdownIt({
   },
 })
 
-const html = computed(() => md.render(stripAnsi(props.text)))
+// Debounced rendering: avoid running md.render() on every text delta during streaming.
+// 100ms debounce prevents main thread blocking when text grows large.
+const html = ref('')
+let renderTimer: ReturnType<typeof setTimeout> | null = null
+let lastRenderedText = ''
+
+function renderNow() {
+  lastRenderedText = props.text
+  html.value = md.render(stripAnsi(props.text))
+}
+
+watch(
+  () => props.text,
+  (newText) => {
+    // If text shrank (session switch) or is empty, render immediately
+    if (newText.length < lastRenderedText.length || !newText) {
+      if (renderTimer) { clearTimeout(renderTimer); renderTimer = null }
+      renderNow()
+      return
+    }
+    // For incremental growth (streaming), debounce
+    if (!renderTimer) {
+      renderTimer = setTimeout(() => {
+        renderTimer = null
+        renderNow()
+      }, 100)
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>

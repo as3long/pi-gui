@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, onUnmounted, watch } from 'vue'
+import { computed, ref, onUnmounted } from 'vue'
 import { usePureMVC, ModelProxy } from '../../mvc'
 import { useSessionStore } from '../../stores/session'
 import { useSettingsStore } from '../../stores/settings'
+import { piAbort } from '../../ipc/bridge'
 
 const { facade } = usePureMVC()
 const modelProxy = facade.retrieveProxy(ModelProxy.NAME) as ModelProxy
@@ -13,6 +14,10 @@ const settingsStore = useSettingsStore()
 const stats = computed(() => sessionStore.stats)
 const thinkingLevel = ref(modelProxy.thinkingLevel)
 const cwd = ref(settingsStore.cwd)
+
+// Watchdog state
+const isInactive = computed(() => sessionStore.isInactive)
+const inactiveSeconds = computed(() => sessionStore.inactiveSeconds)
 
 // Sync thinking level via polling with proper cleanup
 const syncTimer = setInterval(() => {
@@ -47,16 +52,33 @@ const contextDisplay = computed(() => {
   if (!contextWindow.value) return null
   return `${formatTokens(contextTokens.value)}/${formatTokens(contextWindow.value)}`
 })
+
+async function handleAbort() {
+  try {
+    await piAbort()
+  } catch (e) {
+    console.error('[StatusBar] Failed to abort:', e)
+  }
+}
 </script>
 
 <template>
-  <div class="status-bar">
+  <div class="status-bar" :class="{ 'inactive': isInactive }">
     <span class="stat" title="Input tokens">↑{{ formatTokens(input) }}</span>
     <span class="stat" title="Output tokens">↓{{ formatTokens(output) }}</span>
     <span class="stat" title="Total tokens">R{{ formatTokens(total) }}</span>
     <span class="stat" title="Context usage">CH{{ contextPercent.toFixed(1) }}%</span>
     <span class="stat" title="Cost">{{ formatCost(cost) }}</span>
     <span class="stat" title="Context window">{{ contextDisplay || 'N/A' }}</span>
+    
+    <!-- Inactivity warning -->
+    <span v-if="isInactive" class="stat inactive-warning" :title="`No activity for ${inactiveSeconds}s`">
+      ⚠️ {{ inactiveSeconds }}s inactive
+    </span>
+    <button v-if="isInactive" class="abort-btn" @click="handleAbort" title="Abort current operation">
+      ⏹ Abort
+    </button>
+    
     <span class="stat cwd" :title="`Working Directory: ${cwd}`">📂 {{ cwd || 'Not set' }}</span>
     <span class="stat thinking" :title="`Thinking: ${thinkingLevel}`">({{ thinkingLevel }})</span>
   </div>
@@ -78,6 +100,11 @@ const contextDisplay = computed(() => {
   white-space: nowrap;
 }
 
+.status-bar.inactive {
+  background: var(--warning-bg);
+  border-bottom-color: var(--warning-color);
+}
+
 .stat {
   flex-shrink: 0;
 }
@@ -91,5 +118,33 @@ const contextDisplay = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.stat.inactive-warning {
+  color: var(--warning-color);
+  font-weight: 600;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.abort-btn {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  background: var(--error-bg);
+  color: var(--error-color);
+  border: 1px solid var(--error-color);
+  border-radius: 4px;
+  font-size: 0.9em;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.abort-btn:hover {
+  background: var(--error-color);
+  color: white;
 }
 </style>
