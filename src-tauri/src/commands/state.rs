@@ -2,9 +2,7 @@ use crate::rpc::protocol::*;
 
 /// Get current session state (async).
 #[tauri::command]
-pub async fn pi_get_state(
-    state: tauri::State<'_, crate::state::AppState>,
-) -> Result<(), String> {
+pub async fn pi_get_state(state: tauri::State<'_, crate::state::AppState>) -> Result<(), String> {
     let mut rpc = super::lock_rpc(&state).await?;
     let cmd = RpcCommand::GetState(GetStateCommand::new("get-state"));
     rpc.send_command(&cmd)

@@ -1,6 +1,6 @@
+mod commands;
 mod rpc;
 mod state;
-mod commands;
 
 use state::AppState;
 

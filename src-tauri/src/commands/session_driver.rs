@@ -3,10 +3,7 @@ use serde_json::Value;
 
 /// Create a new session (session driver API).
 #[tauri::command]
-pub async fn pi_create_session(
-    workspace: Value,
-    options: Option<Value>,
-) -> Result<Value, String> {
+pub async fn pi_create_session(workspace: Value, options: Option<Value>) -> Result<Value, String> {
     // TODO: Implement full session driver
     Ok(serde_json::json!({
         "id": format!("session-{}", uuid::Uuid::new_v4()),
@@ -18,9 +15,7 @@ pub async fn pi_create_session(
 
 /// Open an existing session (session driver API).
 #[tauri::command]
-pub async fn pi_open_session(
-    session_ref: Value,
-) -> Result<Value, String> {
+pub async fn pi_open_session(session_ref: Value) -> Result<Value, String> {
     Ok(serde_json::json!({
         "success": true,
         "sessionRef": session_ref,
@@ -85,7 +80,11 @@ pub async fn pi_set_session_model(
         .unwrap_or("")
         .to_string();
     let mut rpc = super::lock_rpc(&state).await?;
-    let cmd = RpcCommand::SetModel(SetModelCommand::new("session-set-model", provider, model_id));
+    let cmd = RpcCommand::SetModel(SetModelCommand::new(
+        "session-set-model",
+        provider,
+        model_id,
+    ));
     rpc.send_command(&cmd)
 }
 

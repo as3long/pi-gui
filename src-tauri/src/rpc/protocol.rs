@@ -347,9 +347,7 @@ pub enum RpcEvent {
     #[serde(rename = "agent_start")]
     AgentStart,
     #[serde(rename = "agent_end")]
-    AgentEnd {
-        messages: Option<Vec<Value>>,
-    },
+    AgentEnd { messages: Option<Vec<Value>> },
     #[serde(rename = "turn_start")]
     TurnStart,
     #[serde(rename = "turn_end")]
@@ -359,9 +357,7 @@ pub enum RpcEvent {
         tool_results: Vec<Value>,
     },
     #[serde(rename = "message_start")]
-    MessageStart {
-        message: Option<Value>,
-    },
+    MessageStart { message: Option<Value> },
     #[serde(rename = "message_update")]
     MessageUpdate {
         message: Option<Value>,
@@ -369,9 +365,7 @@ pub enum RpcEvent {
         assistant_message_event: Option<AssistantMessageEvent>,
     },
     #[serde(rename = "message_end")]
-    MessageEnd {
-        message: Option<Value>,
-    },
+    MessageEnd { message: Option<Value> },
     #[serde(rename = "tool_execution_start")]
     ToolExecutionStart {
         tool_call_id: String,
@@ -398,9 +392,7 @@ pub enum RpcEvent {
         follow_up: Vec<String>,
     },
     #[serde(rename = "compaction_start")]
-    CompactionStart {
-        reason: Option<String>,
-    },
+    CompactionStart { reason: Option<String> },
     #[serde(rename = "compaction_end")]
     CompactionEnd {
         reason: Option<String>,

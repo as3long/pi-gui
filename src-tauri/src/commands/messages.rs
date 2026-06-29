@@ -38,9 +38,7 @@ pub async fn pi_follow_up(
 
 /// Abort the current agent operation (async).
 #[tauri::command]
-pub async fn pi_abort(
-    state: tauri::State<'_, crate::state::AppState>,
-) -> Result<(), String> {
+pub async fn pi_abort(state: tauri::State<'_, crate::state::AppState>) -> Result<(), String> {
     let mut rpc = super::lock_rpc(&state).await?;
     let cmd = RpcCommand::Abort(AbortCommand::new("abort"));
     rpc.send_command(&cmd)

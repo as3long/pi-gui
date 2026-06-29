@@ -181,11 +181,11 @@ pub async fn append_to_file(path: String, content: String) -> Result<(), String>
         .open(&path)
         .await
         .map_err(|e| format!("Failed to open file for append: {}", e))?;
-    
+
     file.write_all(content.as_bytes())
         .await
         .map_err(|e| format!("Failed to append to file: {}", e))?;
-    
+
     Ok(())
 }
 
@@ -198,7 +198,7 @@ pub async fn truncate_file(path: String) -> Result<(), String> {
         .open(&path)
         .await
         .map_err(|e| format!("Failed to truncate file: {}", e))?;
-    
+
     drop(file);
     Ok(())
 }

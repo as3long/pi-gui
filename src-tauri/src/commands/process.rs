@@ -1,8 +1,8 @@
-use crate::state::AppState;
 use crate::rpc::protocol::StreamEvent;
-use tauri::AppHandle;
-use tauri::ipc::Channel;
+use crate::state::AppState;
 use std::time::Duration;
+use tauri::ipc::Channel;
+use tauri::AppHandle;
 
 /// Start the pi subprocess (async).
 /// Uses legacy event emission (backward compatible).
@@ -42,7 +42,7 @@ pub async fn pi_start_streaming(
             return result;
         }
     }
-    
+
     // Keep the command alive while pi runs.
     // This keeps the channel open for streaming.
     // When pi exits, this loop ends and the command completes.
@@ -52,15 +52,13 @@ pub async fn pi_start_streaming(
             break;
         }
     }
-    
+
     Ok(())
 }
 
 /// Stop the pi subprocess (async).
 #[tauri::command]
-pub async fn pi_stop(
-    state: tauri::State<'_, AppState>,
-) -> Result<(), String> {
+pub async fn pi_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut rpc = super::lock_rpc(&state).await?;
     let result = rpc.kill();
     if result.is_ok() {
@@ -71,8 +69,6 @@ pub async fn pi_stop(
 
 /// Check if pi is running (lock-free atomic operation).
 #[tauri::command]
-pub fn pi_is_running(
-    state: tauri::State<'_, AppState>,
-) -> Result<bool, String> {
+pub fn pi_is_running(state: tauri::State<'_, AppState>) -> Result<bool, String> {
     Ok(state.is_pi_running())
 }

@@ -1,12 +1,12 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
 use tauri::ipc::Channel;
+use tauri::{AppHandle, Emitter};
 
 use super::protocol::*;
 
@@ -39,11 +39,7 @@ impl PiRpcClient {
         }
     }
 
-    pub fn spawn(
-        &mut self,
-        cwd: &str,
-        app_handle: AppHandle,
-    ) -> Result<(), String> {
+    pub fn spawn(&mut self, cwd: &str, app_handle: AppHandle) -> Result<(), String> {
         self.spawn_with_model(cwd, app_handle, None)
     }
 
@@ -190,28 +186,39 @@ impl PiRpcClient {
     }
 
     pub fn send_command(&mut self, command: &RpcCommand) -> Result<(), String> {
-        let sender = self.stdin_sender.as_ref().ok_or("stdin channel not available")?;
+        let sender = self
+            .stdin_sender
+            .as_ref()
+            .ok_or("stdin channel not available")?;
 
         let json = serde_json::to_string(command)
             .map_err(|e| format!("Failed to serialize command: {}", e))?;
 
         // Non-blocking send to background thread
-        sender.send(StdinMessage::Command(json))
+        sender
+            .send(StdinMessage::Command(json))
             .map_err(|e| format!("Failed to send to stdin writer: {}", e))?;
-        
+
         Ok(())
     }
 
-    pub fn send_extension_ui_response(&mut self, response: &ExtensionUiResponse) -> Result<(), String> {
-        let sender = self.stdin_sender.as_ref().ok_or("stdin channel not available")?;
+    pub fn send_extension_ui_response(
+        &mut self,
+        response: &ExtensionUiResponse,
+    ) -> Result<(), String> {
+        let sender = self
+            .stdin_sender
+            .as_ref()
+            .ok_or("stdin channel not available")?;
 
         let json = serde_json::to_string(response)
             .map_err(|e| format!("Failed to serialize extension UI response: {}", e))?;
 
         // Non-blocking send to background thread
-        sender.send(StdinMessage::Command(json))
+        sender
+            .send(StdinMessage::Command(json))
             .map_err(|e| format!("Failed to send to stdin writer: {}", e))?;
-        
+
         Ok(())
     }
 
@@ -269,7 +276,11 @@ impl Drop for PiRpcClient {
 
 /// Read events from pi's stdout and send through a Tauri Channel.
 /// This is more efficient than emitting individual events.
-fn read_events_with_channel(reader: impl Read + Send + 'static, channel: Channel<StreamEvent>, running: Arc<AtomicBool>) {
+fn read_events_with_channel(
+    reader: impl Read + Send + 'static,
+    channel: Channel<StreamEvent>,
+    running: Arc<AtomicBool>,
+) {
     let buf_reader = BufReader::new(reader);
 
     for line in buf_reader.lines() {
@@ -299,7 +310,11 @@ fn read_events_with_channel(reader: impl Read + Send + 'static, channel: Channel
 }
 
 /// Read events from pi's stdout and emit Tauri events (legacy mode).
-fn read_events(reader: impl Read + Send + 'static, app_handle: AppHandle, running: Arc<AtomicBool>) {
+fn read_events(
+    reader: impl Read + Send + 'static,
+    app_handle: AppHandle,
+    running: Arc<AtomicBool>,
+) {
     let buf_reader = BufReader::new(reader);
 
     for line in buf_reader.lines() {

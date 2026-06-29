@@ -15,9 +15,7 @@ pub async fn pi_set_model(
 
 /// Cycle to the next available model (async).
 #[tauri::command]
-pub async fn pi_cycle_model(
-    state: tauri::State<'_, crate::state::AppState>,
-) -> Result<(), String> {
+pub async fn pi_cycle_model(state: tauri::State<'_, crate::state::AppState>) -> Result<(), String> {
     let mut rpc = super::lock_rpc(&state).await?;
     let cmd = RpcCommand::CycleModel(CycleModelCommand::new("cycle-model"));
     rpc.send_command(&cmd)
@@ -35,7 +33,13 @@ pub async fn pi_get_available_models() -> Result<Vec<serde_json::Value>, String>
 
     let mut cmd = if pi_path.ends_with(".ps1") {
         let mut c = Command::new("powershell.exe");
-        c.args(&["-ExecutionPolicy", "Bypass", "-File", &pi_path, "--list-models"]);
+        c.args(&[
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            &pi_path,
+            "--list-models",
+        ]);
         c
     } else {
         let mut c = Command::new(&pi_path);

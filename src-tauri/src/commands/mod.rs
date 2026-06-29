@@ -14,12 +14,9 @@ const LOCK_TIMEOUT_MS: u64 = 200;
 pub async fn lock_rpc<'a>(
     state: &'a tauri::State<'_, AppState>,
 ) -> Result<MutexGuard<'a, crate::rpc::client::PiRpcClient>, String> {
-    tokio::time::timeout(
-        Duration::from_millis(LOCK_TIMEOUT_MS),
-        state.rpc.lock(),
-    )
-    .await
-    .map_err(|_| "Lock timeout: RPC client is busy".to_string())
+    tokio::time::timeout(Duration::from_millis(LOCK_TIMEOUT_MS), state.rpc.lock())
+        .await
+        .map_err(|_| "Lock timeout: RPC client is busy".to_string())
 }
 
 pub mod config;
