@@ -115,15 +115,23 @@ async function onAbort() {
 
 async function onNewSession() {
   logger.info('Creating new chat...')
+  
+  // Set guard to prevent get_state from overwriting our new session
+  sessionStore.beginNewSession()
+  
   chatStore.createNewChat()
   sessionStore.currentSessionId = null
   sessionStore.currentSessionFile = null
   sessionStore.sessionName = 'New Chat'
 
   // Create the backend session immediately so it's ready when user sends a message
-  pendingNewSessionPromise = piNewSession().catch(e => {
+  pendingNewSessionPromise = piNewSession().then(() => {
+    // Allow session ID updates again after backend session is created
+    sessionStore.endNewSession()
+  }).catch(e => {
     logger.error('Failed to create backend session:', e)
     pendingNewSessionPromise = null
+    sessionStore.endNewSession()
   })
 
   logger.info('New chat created, backend session creation started')

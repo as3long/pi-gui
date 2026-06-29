@@ -65,6 +65,11 @@ export const useSessionStore = defineStore('session', () => {
   // ── Watchdog State ──
   const isInactive = ref(false) // True when agent has been inactive for >60s during running
   const inactiveSeconds = ref(0) // Seconds of inactivity
+  
+  // ── New Session Guard ──
+  // When true, ignore session ID updates from get_state responses
+  // This prevents the watcher from switching away from a newly created session
+  const isCreatingNewSession = ref(false)
 
   // ── Persistence ──
   const STORAGE_KEY_WORKSPACE = 'pi-gui:currentWorkspace'
@@ -307,8 +312,10 @@ export const useSessionStore = defineStore('session', () => {
         }
         
         if ('sessionId' in data || 'session_id' in data) {
-          // Only set from response if not already restored from disk
-          if (!currentSessionId.value) {
+          // Only set from response if:
+          // 1. Not already restored from disk
+          // 2. Not currently creating a new session (user clicked New)
+          if (!currentSessionId.value && !isCreatingNewSession.value) {
             currentSessionId.value = data.sessionId || data.session_id
             currentSessionFile.value = data.sessionFile || data.session_file
             sessionName.value = data.sessionName || data.session_name
@@ -382,6 +389,18 @@ export const useSessionStore = defineStore('session', () => {
     if (sessionStatus.value === 'running') {
       resetAgentWatchdog()
     }
+  }
+
+  // ── New Session Guard Functions ──
+  
+  /** Mark that we're creating a new session (ignore get_state session ID updates) */
+  function beginNewSession() {
+    isCreatingNewSession.value = true
+  }
+  
+  /** Clear the new session guard (allow session ID updates again) */
+  function endNewSession() {
+    isCreatingNewSession.value = false
   }
 
   function setSessions(list: SessionInfo[]) {
@@ -593,6 +612,11 @@ export const useSessionStore = defineStore('session', () => {
     // Watchdog State
     isInactive,
     inactiveSeconds,
+    
+    // New Session Guard
+    isCreatingNewSession,
+    beginNewSession,
+    endNewSession,
 
     // Computed
     currentSessionSnapshot,
